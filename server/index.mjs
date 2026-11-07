@@ -1,72 +1,47 @@
-// 桌上弹射冰球 —— 权威服务器入口
-// HTTP: /api/leaderboard /api/health   WS: 任意路径（由 nginx 只转发 /hockey-ws）
-import http from 'node:http';
-import { WebSocketServer } from 'ws';
-import { Registry } from './rooms.mjs';
+// 弹射冰球 —— Colyseus 0.18 权威服务器入口
+// HTTP: /api/leaderboard /api/health + /matchmake/*（SDK 内置路由）
+// WS: {processId}/{roomId}（nginx 按 Upgrade 头转发）
+import { Server, matchMaker } from 'colyseus';
+import { WebSocketTransport } from '@colyseus/ws-transport';
+import { GameRoom } from './game-room.mjs';
+import { QueueRoom } from './queue-room.mjs';
 import * as board from './leaderboard.mjs';
 
 const PORT = Number(process.env.PORT) || 3217;
-const TICK_HZ = 60;
-const SNAP_EVERY = 5; // 每 5 帧 1 个快照 = 12Hz
 
 board.load();
 
-const registry = new Registry({ onResult: (pid, name, won) => board.record(pid, name, won) });
-
-const server = http.createServer((req, res) => {
-  const url = new URL(req.url, 'http://localhost');
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  if (url.pathname === '/api/health') {
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ ok: true, rooms: registry.rooms.size, queue: registry.queue.length, uptime: process.uptime() }));
-    return;
-  }
-  if (url.pathname === '/api/leaderboard') {
-    const period = url.searchParams.get('period') === 'week' ? 'week' : 'all';
-    const limit = Math.min(50, Math.max(1, Number(url.searchParams.get('limit')) || 10));
-    const pid = url.searchParams.get('pid') || '';
-    res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
-    res.end(JSON.stringify(board.query(period, limit, pid)));
-    return;
-  }
-  res.writeHead(404, { 'Content-Type': 'application/json' });
-  res.end(JSON.stringify({ error: 'not found' }));
+const gameServer = new Server({
+  transport: new WebSocketTransport({
+    pingInterval: 6000,
+    pingMaxRetries: 3,
+  }),
+  // /api 与 /matchmake 共用 transport 的 express 应用
+  express: (app) => {
+    app.get('/api/health', async (req, res) => {
+      let rooms = -1;
+      try { rooms = (await matchMaker.query({ name: 'game' })).length; } catch {}
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      res.json({ ok: true, rooms, uptime: process.uptime() });
+    });
+    app.get('/api/leaderboard', (req, res) => {
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      const period = req.query.period === 'week' ? 'week' : 'all';
+      const limit = Math.min(50, Math.max(1, Number(req.query.limit) || 10));
+      const pid = String(req.query.pid || '');
+      res.setHeader('Cache-Control', 'no-store');
+      res.json(board.query(period, limit, pid));
+    });
+  },
 });
 
-const wss = new WebSocketServer({ server });
+gameServer.define('game', GameRoom);
+gameServer.define('queue', QueueRoom);
 
-wss.on('connection', (ws) => {
-  let bound = false;
-  ws.on('message', (raw) => {
-    let m;
-    try { m = JSON.parse(raw); } catch { return; }
-    if (!m || typeof m.t !== 'string') return;
-    if (m.t === 'hello') {
-      if (bound) return;
-      bound = true;
-      registry.attach(ws, m);
-      return;
-    }
-    const ref = registry.connRoom.get(ws);
-    if (ref) ref.room.handleMessage(ref.sid, m);
-  });
-  ws.on('close', () => registry.onClose(ws));
-  ws.on('error', () => {});
+gameServer.listen(PORT, '127.0.0.1').then(() => {
+  console.log(`sling-hockey colyseus server on 127.0.0.1:${PORT} (patch 20Hz)`);
 });
 
-// 主循环
-let last = Date.now();
-let frame = 0;
-setInterval(() => {
-  const now = Date.now();
-  const dt = Math.min(0.1, (now - last) / 1000);
-  last = now;
-  frame++;
-  registry.tick(dt, frame % SNAP_EVERY === 0);
-}, 1000 / TICK_HZ);
-
-server.listen(PORT, '127.0.0.1', () => {
-  console.log(`sling-hockey server on 127.0.0.1:${PORT} (tick ${TICK_HZ}Hz, snap ${SNAP_EVERY}Hz)`);
+process.on('SIGTERM', () => {
+  gameServer.gracefullyShutdown(true).then(() => process.exit(0));
 });
-
-process.on('SIGTERM', () => { server.close(); wss.close(); process.exit(0); });

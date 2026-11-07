@@ -1,0 +1,158 @@
+--- a/client/js/game.mjs
++++ b/client/js/game.mjs
+@@ -5506,6 +5506,14 @@
+   vibs = [];
+   path = [];
+   lastKey = ``;
++  tube = {
++    center: new v(), tangent: new v(), normal: new v(), up: new v(0, 1, 0),
++    point: new v(), radial: new v(), prev: new v(), next: new v(),
++  };
++  section = Array.from({ length: $ }, (_, e) => {
++    let t = (e / $) * Math.PI * 2;
++    return { cos: Math.cos(t), sin: Math.sin(t) };
++  });
+   constructor(e, t) {
+     ((this.side = e),
+       (this.f = e === 0 ? 1 : -1),
+@@ -5543,6 +5551,7 @@
+     });
+   }
+   update(e, t) {
++    if (!t.length && !this.vibs.length && this.lastKey === ``) return;
+     for (let t of this.vibs) t.t += e;
+     this.vibs = this.vibs.filter((e) => Math.exp(-e.t / e.decay) > 0.015);
+     let n = T - 0.12 - Nr,
+@@ -5594,23 +5603,19 @@
+       t += Math.hypot(e[n].x - e[n - 1].x, e[n].y - e[n - 1].y);
+     let n =
+         Tr * Math.max(0.62, Math.min(1, Math.sqrt(Pr / Math.max(t, 0.001)))),
+-      r = new v(),
+-      i = new v(),
+-      a = new v(),
+-      o = new v(0, 1, 0),
+-      s = new v(),
+-      c = new v();
++      { center: r, tangent: i, normal: a, up: o, point: s, radial: c,
++        prev: f, next: p } = this.tube;
+     for (let t = 0; t < Mr; t++) {
+       let l = e[t],
+         u = e[Math.max(0, t - 1)],
+         d = e[Math.min(79, t + 1)];
+       Q(this.f * l.x, this.f * l.y, wr, r);
+-      let f = Q(this.f * u.x, this.f * u.y, wr, new v()),
+-        p = Q(this.f * d.x, this.f * d.y, wr, new v());
++      Q(this.f * u.x, this.f * u.y, wr, f);
++      Q(this.f * d.x, this.f * d.y, wr, p);
+       (i.subVectors(p, f).normalize(), a.crossVectors(i, o).normalize());
+       for (let e = 0; e < $; e++) {
+-        let i = (e / $) * Math.PI * 2;
+-        (c.copy(o).multiplyScalar(Math.cos(i)).addScaledVector(a, Math.sin(i)),
++        let i = this.section[e];
++        (c.copy(o).multiplyScalar(i.cos).addScaledVector(a, i.sin),
+           s.copy(r).addScaledVector(c, n));
+         let l = (t * $ + e) * 3;
+         ((this.pos[l] = s.x),
+@@ -5995,10 +6000,18 @@
+     }
+     update(e, t, n, r) {
+       let i = new Set(),
+-        a = 0.55 + 0.45 * Math.sin(r * 4.2);
++        a = 0.55 + 0.45 * Math.sin(r * 4.2),
++        shadowChanged = !1;
+       for (let r of e) {
+         i.add(r.id);
+-        let e = this.views.get(r.id) ?? this.create(r.id, r.color);
++        let e = this.views.get(r.id);
++        if (!e) {
++          e = this.create(r.id, r.color);
++          shadowChanged = !0;
++        }
++        shadowChanged ||= !e.root.visible ||
++          e.root.position.x !== r.x || e.root.position.y !== r.lift ||
++          e.root.position.z !== -r.y || e.root.rotation.y !== r.a;
+         ((e.root.visible = !0),
+           Q(r.x, r.y, r.lift, e.root.position),
+           (e.root.rotation.y = r.a));
+@@ -6017,9 +6030,11 @@
+       }
+       for (let [e, t] of this.views)
+         i.has(e) ||
+-          ((t.root.visible = !1),
++          ((shadowChanged ||= t.root.visible),
++          (t.root.visible = !1),
+           (t.shadow.visible = !1),
+           (t.ring.visible = !1));
++      return shadowChanged;
+     }
+     topOf(e, t) {
+       return Q(e, t, X, this.tmp);
+@@ -6060,13 +6075,17 @@
+         antialias: !0,
+         powerPreference: `high-performance`,
+       });
+-      (t.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2)),
+-        (t.shadowMap.enabled = !0),
++      ((t.shadowMap.enabled = !0),
++        (t.shadowMap.autoUpdate = !1),
++        (t.shadowMap.needsUpdate = !0),
+         (t.shadowMap.type = 1),
+         (t.toneMapping = 4),
+         (t.toneMappingExposure = 1.05),
+         (t.outputColorSpace = m),
+         (this.renderer = t));
++      e.addEventListener(`webglcontextrestored`, () => {
++        this.renderer.shadowMap.needsUpdate = !0;
++      });
+       let n = Math.min(8, t.capabilities.getMaxAnisotropy());
+       this.effectsOn = !window.matchMedia?.(`(prefers-reduced-motion: reduce)`)
+         .matches;
+@@ -6080,7 +6099,7 @@
+       let a = new ee(16773340, 2.7);
+       (a.position.set(-11, 34, 5), (a.castShadow = !0));
+       let o = Math.min(window.innerWidth, window.innerHeight) < 600;
+-      a.shadow.mapSize.set(o ? 1536 : 2048, o ? 1536 : 2048);
++      a.shadow.mapSize.set(o ? 1024 : 1536, o ? 1024 : 1536);
+       let s = a.shadow.camera;
+       ((s.left = -15),
+         (s.right = 15),
+@@ -6118,8 +6137,15 @@
+     }
+     resize(e, t) {
+       ((this.width = Math.max(1, e)),
+-        (this.height = Math.max(1, t)),
+-        this.renderer.setSize(this.width, this.height, !1),
++        (this.height = Math.max(1, t)));
++      // 限制 WebGL 像素量；DOM 界面仍使用设备的原生分辨率。
++      const ratio = Math.min(
++        window.devicePixelRatio || 1,
++        Math.min(this.width, this.height) < 600 ? 1.5 : 2,
++        Math.sqrt(2500000 / (this.width * this.height)),
++      );
++      if (this.renderer.getPixelRatio() !== ratio) this.renderer.setPixelRatio(ratio);
++      (this.renderer.setSize(this.width, this.height, !1),
+         this.sparks.setScale(
+           this.height * this.renderer.getPixelRatio() * 0.55,
+         ),
+@@ -6280,7 +6306,7 @@
+         }
+         this.lastSide.set(a.id, l);
+       }
+-      this.pucks.update(n, t.highlight ?? null, t.selected ?? null, this.time);
++      let shadowChanged = this.pucks.update(n, t.highlight ?? null, t.selected ?? null, this.time);
+       for (let r of [0, 1]) {
+         let i = r === 0 ? -Z : Z,
+           a = r === 0 ? 1 : -1,
+@@ -6298,8 +6324,11 @@
+           let l = Math.hypot(c.x - o.x, c.y - o.y) / Math.max(e, 1 / 240);
+           this.bands[r].pluck(o.x, Math.min(1, l / 37));
+         }
++        const version = this.bands[r].geo.attributes.position.version;
+         ((this.pressPrev[r] = s), this.bands[r].update(e, o));
+-      }
++        shadowChanged ||= this.bands[r].geo.attributes.position.version !== version;
++      }
++      this.renderer.shadowMap.needsUpdate ||= shadowChanged;
+       let i = t.aims ?? [];
+       (this.guides[0].update(i[0] ?? null, this.time),
+         this.guides[1].update(i[1] ?? null, this.time),

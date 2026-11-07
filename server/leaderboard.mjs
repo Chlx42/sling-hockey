@@ -47,7 +47,10 @@ export function query(period, limit, pid) {
       .map(([p, r]) => ({ pid: p, name: r.name, wins: r.wins, played: r.played }));
   }
   rows.sort((a, b) => b.wins - a.wins || b.played - a.played);
-  const top = rows.slice(0, limit).map((r) => ({ name: r.name, wins: r.wins, played: r.played }));
+  const top = rows.slice(0, limit).map((r, i) => ({
+    rank: i + 1, name: r.name, tag: r.pid.slice(-6), wins: r.wins,
+    played: r.played, games: r.played, rate: r.played ? r.wins / r.played : 0,
+  }));
   const mine = pid ? rows.find((r) => r.pid === pid) : null;
   const rank = mine ? rows.findIndex((r) => r.pid === pid) + 1 : null;
   return {

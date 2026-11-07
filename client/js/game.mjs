@@ -1,9 +1,10 @@
 // 弹射冰球 —— 1:1 复刻客户端
 // 渲染/UI/音效/AI 控制器逆向移植自 https://bin.hlool.top 公开客户端 bundle（仅供学习研究）
 // 规则引擎与服务端逻辑同源（原站把整套服务端打包进了客户端）
-// 网络层为自研 WS 适配器（WSRoom/Yn），对接自研权威服务器，接口与原版 Colyseus room 一致
+// 网络层通过 Colyseus SDK 对接权威服务器
 // 重建：python3 deploy/build-game.py
 import * as T3 from '../vendor/three-orig.js';
+import { n as e, t } from '../vendor/colyseus-orig.js';
 import * as n from '@dimforge/rapier2d-compat';
 await n.init();
 const {A: r,B: i,C: a,D: o,E: s,F: c,I: l,L: u,M: d,N: f,O: p,P: m,R: h,S: g,T: _,V: v,_: y,a: b,b: x,c: S,d: ee,f: C,g: te,h: ne,i: re,j: ie,k: ae,l: w,m: oe,n: se,o: ce,p: le,r: ue,s: de,t: fe,u: pe,v: me,w: he,x: ge,y: _e,z: ve} = T3;
@@ -2616,151 +2617,60 @@ async function Jn(e, t = 50) {
     window.clearTimeout(i);
   }
 }
-var WSRoom = class {
-  constructor(ws) {
-    this.ws = ws;
-    this.sessionId = null;
-    this.roomId = null;
-    this.state = null;
-    this._stateCbs = [];
-    this._msgCbs = new Map();
-    this._leaveCbs = [];
-    this._dropCbs = [];
-    this._reconnCbs = [];
-    this._pings = new Map();
-    this._players = new Map();
-    this._left = !1;
-    this._retries = 0;
-    let self = this;
-    ws.addEventListener(`message`, (ev) => {
-      let m;
-      try { m = JSON.parse(ev.data); } catch { return; }
-      self._on(m);
-    });
-    ws.addEventListener(`close`, () => { self._left || self._dropped(); });
-    ws.addEventListener(`error`, () => {});
-  }
-  _on(m) {
-    switch (m.t) {
-      case `hello`:
-        this.sessionId = m.sid;
-        m.resumed && ((this._retries = 0), this._reconnCbs.forEach((cb) => cb()));
-        break;
-      case `room`:
-        this.roomId = m.code;
-        break;
-      case `st`: {
-        this._players = new Map(m.pl.map(([sid, name, side, wins, rematch, shots, passes, connected, reconnectLeft]) => [sid, { sid, name, side, wins, rematch: !!rematch, shots, passes, connected: !!connected, reconnectLeft: reconnectLeft || 0 }]));
-        const pucks = m.pk.map(([id, x, y, a, held]) => ({ id, x: x / 10, y: y / 10, a: a / 100, c: id < 5 ? id % 2 : (id - 4) % 2, held: held < 0 ? void 0 : held }));
-        this._applyState({
-          serverTime: m.st, phase: m.ph, timeLeft: m.tl, matchTime: m.mt, otTime: m.ot,
-          overtime: !!m.ov, countdown: m.cd, winner: m.winner, reason: m.reason,
-          players: this._players, pucks,
-        });
-        break;
-      }
-      case `shot`: this._emit(`shot`, { ...m, t: m.at }); break;
-      case `score`: this._emit(`score`, m.e); break;
-      case `fx`: this._emit(`fx`, m.e); break;
-      case `renamed`: this._emit(`renamed`, m); break;
-      case `evt`: this._emit(`evt`, m); break;
-      case `pong`: {
-        let cb = this._pings.get(m.ts);
-        if (cb) { this._pings.delete(m.ts); cb(Math.round(performance.now() - m.ts)); }
-        break;
-      }
-    }
-  }
-  _applyState(s) { this.state = s; this._stateCbs.forEach((cb) => cb(s)); }
-  _emit(type, payload) { let cbs = this._msgCbs.get(type); cbs && cbs.forEach((cb) => cb(payload)); }
-  onStateChange(cb) { this._stateCbs.push(cb); this.state && cb(this.state); }
-  onMessage(e, t) { this._msgCbs.has(e) || this._msgCbs.set(e, []); this._msgCbs.get(e).push(t); }
-  onLeave(e) { this._leaveCbs.push(e); }
-  onDrop(e) { this._dropCbs.push(e); }
-  onReconnect(e) { this._reconnCbs.push(e); }
-  send(e, t) { this.ws?.readyState === 1 && this.ws.send(JSON.stringify({ t: e, ...t })); }
-  ping(e) { let t = performance.now() | 0; this._pings.set(t, e), this.send(`ping`, { ts: t }); }
-  leave() { this._left = !0; try { this.ws?.close(); } catch {} return Promise.resolve(); }
-  _dropped() {
-    if ((this._dropCbs.forEach((cb) => cb()), this._retries >= 3))
-      return void this._leaveCbs.forEach((cb) => cb(4999));
-    this._retries++;
-    let self = this;
-    setTimeout(() => {
-      if (self._left) return;
-      let e = location.protocol === `https:` ? `wss` : `ws`;
-      let ws = new WebSocket(`${e}://${location.host}/hockey-ws`);
-      ws.addEventListener(`open`, () => ws.send(JSON.stringify({ t: `hello`, mode: `resume`, sid: self.sessionId, name: ``, pid: localStorage.getItem(`sling.pid`) || `` })));
-      self.ws = ws;
-      ws.addEventListener(`message`, (ev) => { let m; try { m = JSON.parse(ev.data); } catch { return; } self._on(m); });
-      ws.addEventListener(`close`, () => { self._left || self._dropped(); });
-      ws.addEventListener(`error`, () => {});
-    }, 600 * this._retries);
-  }
-},
-  Yn = class {
-    _connect(hello, hooks) {
-      let e = location.protocol === `https:` ? `wss` : `ws`,
-        t = new URLSearchParams(location.search).get(`server`) || location.origin,
-        n = new WebSocket(`${e}://${new URL(t).host}/hockey-ws`),
-        r = null, i = !1, a = !1, o = !1, s = !1, c = !1;
-      // o: 已收到首帧状态; s: 已收到房间号; c: 已 resolve/reject
-      let l = () => {
-        c || (a && (hello.mode !== `create` || s) && ((c = !0), hooks.onReady(r)));
-      };
-      n.addEventListener(`open`, () => n.send(JSON.stringify({ t: `hello`, mode: hello.mode, room: hello.room, name: hello.name, pid: localStorage.getItem(`sling.pid`) || `` })));
-      n.addEventListener(`message`, (ev) => {
-        let m;
-        try { m = JSON.parse(ev.data); } catch { return; }
-        ((Yn._dbg ||= []).push(m.t + (m.ph ? `:${m.ph}` : ``)), Yn._dbg.length > 40 && Yn._dbg.shift());
-        if (m.t === `hello`) {
-          r = new WSRoom(n), (r.sessionId = m.sid), (i = !0);
-          return;
-        }
-        if (m.t === `room`) { s = !0, r && (r.roomId = m.code); l(); return; }
-        if (m.t === `queued`) { hooks.onQueued?.(m.count); return; }
-        if (m.t === `st`) {
-          a = !0;
-          r && r._on(m);
-          if (hello.mode !== `queue`) l();
-          else {
-            // 匹配模式：进入对局房（starting/waiting/playing 任一真实状态）才 resolve
-            (m.ph === `starting` || m.ph === `playing` || m.ph === `waiting`) && !c && ((c = !0), hooks.onReady(r));
-          }
-          return;
-        }
-        if (m.t === `evt` && m.type === `no_room` && !c) { c = !0; hooks.onFail(Error(`房间不存在或已解散`)); return; }
-        if (m.t === `evt` && m.type === `bad_hello` && !c) { c = !0; hooks.onFail(Error(`无法进入房间`)); return; }
-        r && r._on(m);
-      });
-      n.addEventListener(`close`, () => { !c && !i && ((c = !0), hooks.onFail(Error(`无法连接服务器`))); });
-      n.addEventListener(`error`, () => {});
-      return { room: r, ws: n };
-    }
-    _open(hello) {
-      return new Promise((resolve, reject) => {
-        this._connect(hello, { onReady: resolve, onFail: reject, onQueued: () => {} });
-      });
-    }
+var Yn = class {
+    client = new t(Gn());
     enterQueue(e, t) {
-      let n = null, r = !1, i = !1;
+      let n = null,
+        r = !1,
+        i = !1;
       return {
         room: new Promise((a, o) => {
-          let s = this._connect({ mode: `queue`, name: e }, {
-            onQueued: (e) => t?.(e),
-            onReady: (e) => { r || ((i = !0), a(e)); },
-            onFail: (e) => { r || i || ((i = !0), o(e)); },
-          });
-          n = s;
+          this.client
+            .joinOrCreate(`queue`, { name: e, rank: 1e3, pid: qn() })
+            .then((e) => {
+              ((n = e),
+                r
+                  ? e.leave()
+                  : (e.onMessage(`clients`, (e) => t?.(e)),
+                    e.onMessage(`evt`, (t) => {
+                      if (t.type !== `match_failed` || r || i) return;
+                      i = !0;
+                      e.leave();
+                      o(Error(`匹配席位已过期，请重新匹配。`));
+                    }),
+                    e.onMessage(`seat`, async (t) => {
+                      if (r || i) return;
+                      e.send(`confirm`);
+                      try {
+                        let n = await this.client.consumeSeatReservation(t);
+                        if (r || i) n.leave();
+                        else ((i = !0), a(n));
+                      } catch (t) {
+                        if (!r && !i) ((i = !0), o(t));
+                      } finally {
+                        e.leave();
+                      }
+                    }),
+                    e.onLeave((e) => {
+                      !i &&
+                        !r &&
+                        e !== 1e3 &&
+                        o(Error(`队列连接已断开 (${e})`));
+                    })));
+            })
+            .catch(o);
         }),
         cancel: () => {
-          ((r = !0),
-            n?.room ? !i && n.room.leave() : n?.ws?.close());
+          ((r = !0), n && !i && n.leave());
         },
       };
     }
-    createFriendRoom(e) { return this._open({ mode: `create`, name: e }); }
-    joinFriendRoom(e, t) { return this._open({ mode: `join`, room: e, name: t }); }
+    createFriendRoom(e) {
+      return this.client.create(`game`, { mode: `friend`, name: e, pid: qn() });
+    }
+    joinFriendRoom(e, t) {
+      return this.client.joinById(e, { name: t, pid: qn() });
+    }
   },
   Xn = 100,
   Zn = [`puck`, `wall`, `divider`, `band`, `launch`],
@@ -2846,7 +2756,7 @@ var WSRoom = class {
             t.ui.setHud(!1),
             t.ui.showDialog(
               `连接已断开`,
-              n === 4999
+              n === e.FAILED_TO_RECONNECT
                 ? `多次重连失败，已退出对局。`
                 : `与服务器的连接已断开。`,
               [{ label: `返回主菜单`, onClick: () => t.exit() }],
@@ -5606,6 +5516,14 @@ var Ir = class {
   vibs = [];
   path = [];
   lastKey = ``;
+  tube = {
+    center: new v(), tangent: new v(), normal: new v(), up: new v(0, 1, 0),
+    point: new v(), radial: new v(), prev: new v(), next: new v(),
+  };
+  section = Array.from({ length: $ }, (_, e) => {
+    let t = (e / $) * Math.PI * 2;
+    return { cos: Math.cos(t), sin: Math.sin(t) };
+  });
   constructor(e, t) {
     ((this.side = e),
       (this.f = e === 0 ? 1 : -1),
@@ -5643,6 +5561,7 @@ var Ir = class {
     });
   }
   update(e, t) {
+    if (!t.length && !this.vibs.length && this.lastKey === ``) return;
     for (let t of this.vibs) t.t += e;
     this.vibs = this.vibs.filter((e) => Math.exp(-e.t / e.decay) > 0.015);
     let n = T - 0.12 - Nr,
@@ -5694,23 +5613,19 @@ var Ir = class {
       t += Math.hypot(e[n].x - e[n - 1].x, e[n].y - e[n - 1].y);
     let n =
         Tr * Math.max(0.62, Math.min(1, Math.sqrt(Pr / Math.max(t, 0.001)))),
-      r = new v(),
-      i = new v(),
-      a = new v(),
-      o = new v(0, 1, 0),
-      s = new v(),
-      c = new v();
+      { center: r, tangent: i, normal: a, up: o, point: s, radial: c,
+        prev: f, next: p } = this.tube;
     for (let t = 0; t < Mr; t++) {
       let l = e[t],
         u = e[Math.max(0, t - 1)],
         d = e[Math.min(79, t + 1)];
       Q(this.f * l.x, this.f * l.y, wr, r);
-      let f = Q(this.f * u.x, this.f * u.y, wr, new v()),
-        p = Q(this.f * d.x, this.f * d.y, wr, new v());
+      Q(this.f * u.x, this.f * u.y, wr, f);
+      Q(this.f * d.x, this.f * d.y, wr, p);
       (i.subVectors(p, f).normalize(), a.crossVectors(i, o).normalize());
       for (let e = 0; e < $; e++) {
-        let i = (e / $) * Math.PI * 2;
-        (c.copy(o).multiplyScalar(Math.cos(i)).addScaledVector(a, Math.sin(i)),
+        let i = this.section[e];
+        (c.copy(o).multiplyScalar(i.cos).addScaledVector(a, i.sin),
           s.copy(r).addScaledVector(c, n));
         let l = (t * $ + e) * 3;
         ((this.pos[l] = s.x),
@@ -6095,10 +6010,18 @@ var Hr = class {
     }
     update(e, t, n, r) {
       let i = new Set(),
-        a = 0.55 + 0.45 * Math.sin(r * 4.2);
+        a = 0.55 + 0.45 * Math.sin(r * 4.2),
+        shadowChanged = !1;
       for (let r of e) {
         i.add(r.id);
-        let e = this.views.get(r.id) ?? this.create(r.id, r.color);
+        let e = this.views.get(r.id);
+        if (!e) {
+          e = this.create(r.id, r.color);
+          shadowChanged = !0;
+        }
+        shadowChanged ||= !e.root.visible ||
+          e.root.position.x !== r.x || e.root.position.y !== r.lift ||
+          e.root.position.z !== -r.y || e.root.rotation.y !== r.a;
         ((e.root.visible = !0),
           Q(r.x, r.y, r.lift, e.root.position),
           (e.root.rotation.y = r.a));
@@ -6117,9 +6040,11 @@ var Hr = class {
       }
       for (let [e, t] of this.views)
         i.has(e) ||
-          ((t.root.visible = !1),
+          ((shadowChanged ||= t.root.visible),
+          (t.root.visible = !1),
           (t.shadow.visible = !1),
           (t.ring.visible = !1));
+      return shadowChanged;
     }
     topOf(e, t) {
       return Q(e, t, X, this.tmp);
@@ -6160,13 +6085,17 @@ var Hr = class {
         antialias: !0,
         powerPreference: `high-performance`,
       });
-      (t.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2)),
-        (t.shadowMap.enabled = !0),
+      ((t.shadowMap.enabled = !0),
+        (t.shadowMap.autoUpdate = !1),
+        (t.shadowMap.needsUpdate = !0),
         (t.shadowMap.type = 1),
         (t.toneMapping = 4),
         (t.toneMappingExposure = 1.05),
         (t.outputColorSpace = m),
         (this.renderer = t));
+      e.addEventListener(`webglcontextrestored`, () => {
+        this.renderer.shadowMap.needsUpdate = !0;
+      });
       let n = Math.min(8, t.capabilities.getMaxAnisotropy());
       this.effectsOn = !window.matchMedia?.(`(prefers-reduced-motion: reduce)`)
         .matches;
@@ -6180,7 +6109,7 @@ var Hr = class {
       let a = new ee(16773340, 2.7);
       (a.position.set(-11, 34, 5), (a.castShadow = !0));
       let o = Math.min(window.innerWidth, window.innerHeight) < 600;
-      a.shadow.mapSize.set(o ? 1536 : 2048, o ? 1536 : 2048);
+      a.shadow.mapSize.set(o ? 1024 : 1536, o ? 1024 : 1536);
       let s = a.shadow.camera;
       ((s.left = -15),
         (s.right = 15),
@@ -6218,8 +6147,15 @@ var Hr = class {
     }
     resize(e, t) {
       ((this.width = Math.max(1, e)),
-        (this.height = Math.max(1, t)),
-        this.renderer.setSize(this.width, this.height, !1),
+        (this.height = Math.max(1, t)));
+      // 限制 WebGL 像素量；DOM 界面仍使用设备的原生分辨率。
+      const ratio = Math.min(
+        window.devicePixelRatio || 1,
+        Math.min(this.width, this.height) < 600 ? 1.5 : 2,
+        Math.sqrt(2500000 / (this.width * this.height)),
+      );
+      if (this.renderer.getPixelRatio() !== ratio) this.renderer.setPixelRatio(ratio);
+      (this.renderer.setSize(this.width, this.height, !1),
         this.sparks.setScale(
           this.height * this.renderer.getPixelRatio() * 0.55,
         ),
@@ -6380,7 +6316,7 @@ var Hr = class {
         }
         this.lastSide.set(a.id, l);
       }
-      this.pucks.update(n, t.highlight ?? null, t.selected ?? null, this.time);
+      let shadowChanged = this.pucks.update(n, t.highlight ?? null, t.selected ?? null, this.time);
       for (let r of [0, 1]) {
         let i = r === 0 ? -Z : Z,
           a = r === 0 ? 1 : -1,
@@ -6398,8 +6334,11 @@ var Hr = class {
           let l = Math.hypot(c.x - o.x, c.y - o.y) / Math.max(e, 1 / 240);
           this.bands[r].pluck(o.x, Math.min(1, l / 37));
         }
+        const version = this.bands[r].geo.attributes.position.version;
         ((this.pressPrev[r] = s), this.bands[r].update(e, o));
+        shadowChanged ||= this.bands[r].geo.attributes.position.version !== version;
       }
+      this.renderer.shadowMap.needsUpdate ||= shadowChanged;
       let i = t.aims ?? [];
       (this.guides[0].update(i[0] ?? null, this.time),
         this.guides[1].update(i[1] ?? null, this.time),

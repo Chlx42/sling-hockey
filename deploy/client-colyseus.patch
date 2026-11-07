@@ -1,0 +1,30 @@
+--- a/client/js/game.mjs
++++ b/client/js/game.mjs
+@@ -2632,13 +2632,23 @@
+                 r
+                   ? e.leave()
+                   : (e.onMessage(`clients`, (e) => t?.(e)),
++                    e.onMessage(`evt`, (t) => {
++                      if (t.type !== `match_failed` || r || i) return;
++                      i = !0;
++                      e.leave();
++                      o(Error(`匹配席位已过期，请重新匹配。`));
++                    }),
+                     e.onMessage(`seat`, async (t) => {
++                      if (r || i) return;
+                       e.send(`confirm`);
+                       try {
+-                        let e = await this.client.consumeSeatReservation(t);
+-                        ((i = !0), a(e));
+-                      } catch (e) {
+-                        o(e);
++                        let n = await this.client.consumeSeatReservation(t);
++                        if (r || i) n.leave();
++                        else ((i = !0), a(n));
++                      } catch (t) {
++                        if (!r && !i) ((i = !0), o(t));
++                      } finally {
++                        e.leave();
+                       }
+                     }),
+                     e.onLeave((e) => {
