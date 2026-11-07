@@ -1,0 +1,15 @@
+{
+  "name": "sling-hockey",
+  "private": true,
+  "type": "module",
+  "description": "桌上弹射冰球 —— 复刻自 bin.hlool.top 逆向分析的规则引擎，自研服务端与客户端",
+  "scripts": {
+    "start": "node server/index.mjs",
+    "smoke": "node deploy/smoke.mjs"
+  },
+  "dependencies": {
+    "@dimforge/rapier2d-compat": "^0.19.2",
+    "three": "^0.187.0",
+    "ws": "^8.18.0"
+  }
+}

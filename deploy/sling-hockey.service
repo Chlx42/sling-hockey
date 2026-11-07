@@ -1,0 +1,16 @@
+[Unit]
+Description=Sling Hockey game server (弹射冰球)
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/sling-hockey
+Environment=PORT=3217
+Environment=SLING_DATA_DIR=/opt/sling-hockey/data
+ExecStart=/usr/local/bin/node server/index.mjs
+Restart=on-failure
+RestartSec=3
+MemoryMax=512M
+
+[Install]
+WantedBy=multi-user.target
