@@ -4,21 +4,21 @@ const sun = `<svg viewBox="0 0 32 32" fill="none" aria-hidden="true"><circle cx=
 const sprout = `<svg viewBox="0 0 32 32" fill="none" aria-hidden="true"><path d="M16 27V15" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/><path d="M16 19C6 20 4 13 5 9c8-1 13 3 11 10Zm0-4c-1-8 4-12 12-11 0 8-4 13-12 11Z" fill="currentColor"/><path d="M11 27h10" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/></svg>`;
 
 export function islandMenu(icons) {
-  return `<section class="screen soft island-home" data-screen="menu" aria-label="小岛冰球首页">
+  return `<section class="screen soft island-home" data-screen="menu" aria-label="广告位招租首页">
     <div class="island-shell">
       <header class="island-header">
-        <div class="island-brand"><span class="brand-leaf">${leaf}</span><span>小岛游乐社<small>THE LITTLE ISLAND CLUB</small></span></div>
+        <div class="island-brand"><button class="brand-leaf" data-act="chlx-note" aria-label="翻开叶子上的小纸条">${leaf}</button><span>Chlx 的小木桌<small>MADE FOR A LITTLE FUN</small></span></div>
         <div class="weather">${sun}<span>宜 · 玩一小会儿</span></div>
       </header>
       <div class="island-main">
         <div class="island-intro">
           <div class="island-heading">
             <span class="eyebrow">放轻松，欢迎上岛</span>
-            <h1>小岛<span>冰球</span><i aria-hidden="true">✦</i></h1>
+            <h1>广告位<span>招租</span><i aria-hidden="true">✦</i></h1>
             <p>一张小木桌，一场好时光。<br>把快乐，弹到你这边。</p>
           </div>
           <img class="island-art" src="./assets/island-club.svg" width="680" height="500" alt="草地小岛上的木制弹射冰球桌，四周有树木与小花" draggable="false">
-          <div class="island-caption"><span></span> LITTLE ISLAND, BIG FUN <span></span></div>
+          <div class="island-caption"><span></span> Chlx WAS HERE <span></span></div>
         </div>
         <div class="panel welcome-panel">
           <div class="paper-tab" aria-hidden="true">${leaf}</div>

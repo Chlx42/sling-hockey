@@ -1,8 +1,10 @@
-# 弹射冰球（sling-hockey）
+# 广告位招租 · Chlx 的弹射冰球（sling-hockey）
 
 线上试玩：**http://123.56.69.142/hockey/**
 
 2.5D 桌面弹射对战：按住自己半场的冰球拖到底线弹力带，后拉松手发射，穿过中央洞口送到对方半场，先清空自己半场的一方获胜。支持人机三档难度、在线匹配（无人时自动配 AI 陪练）和好友房间。
+
+加时赛固定隐藏双方瞄准辅助线，进入时提示一次；常规时间的辅助线仍可在设置中开关。
 
 ## 技术栈
 
@@ -33,7 +35,7 @@ node deploy/benchmark-network.mjs # 同轨迹下比较新旧 Schema 增量编码
 `client/js/game.mjs` 已包含运行所需客户端代码。重建需准备原始分析产物目录
 （默认 `/tmp/bin-hlool-re`，可用 `SLING_BUNDLE_DIR` 指定），运行 `python3 deploy/build-game.py`；
 构建会应用 `deploy/client-performance.patch`、`deploy/client-colyseus.patch`、
-`deploy/client-physics.patch` 和 `deploy/client-island.patch`，保留渲染优化、队列修复、本地预测与界面改版；`deploy/client-tabletop.patch` 保留材质音效和接触状态读取。物理改动以 `engine/index.mjs`
+`deploy/client-physics.patch` 和 `deploy/client-island.patch`，保留渲染优化、队列修复、本地预测与界面改版；`deploy/client-tabletop.patch` 保留材质音效、接触状态读取和高清棋盘。物理改动以 `engine/index.mjs`
 为准，修改后重建客户端，发布时一起更新 `client/js/prediction.mjs`。
 
 ## 本地计算与服务器边界
@@ -90,8 +92,18 @@ node deploy/benchmark-network.mjs # 同轨迹下比较新旧 Schema 增量编码
 
 首页结构在 `client/js/island-ui.mjs`，主题样式在 `client/css/island.css`，本地 SVG 插画与图标在
 `client/assets/`。页面和对局采用奶油纸卡、草地与浅木桌配色，无外部字体或图片依赖。
+首页、加载页和棋盘统一显示“广告位招租”；棋盘角落保留 Chlx 签名，点击首页叶子可翻开小纸条彩蛋。
 `deploy/client-island.patch` 保存生成客户端中的主题入口与渲染调整，构建脚本会在物理补丁后自动应用；
 修改 `game.mjs` 的主题部分时需同步该补丁，避免重建丢失。
+
+对局默认开启“高清棋盘”：设备支持时按 2 倍像素绘制，总像素上限 500 万；设置中关闭后，
+回到 250 万像素预算与手机 1.5 倍上限。阴影按画质和窗口尺寸在 1024～2048 间选择，
+仍只在棋子或弹力带变化时更新；远景雾化移到棋盘之外，避免正常视角的材质泛白。
+
+棋子顶部使用 512² 细木纹，所有棋子共享浅雕刻高度图；棋盘用定向木纹和浅凹凸表现木面，
+倒角与清漆调整为清晰但柔和的边缘。保留原有网格分段、绘制对象和材质变体数量，
+纹理只在建场时生成。按 RGBA8 含 mipmap 估算新增纹理显存约 9.5MiB，高清档还会增加
+客户端像素填充和阴影开销；不增加服务器物理计算。已检查静态整盘/近景显示，未进行对局或性能测试。
 
 ## 目录结构
 

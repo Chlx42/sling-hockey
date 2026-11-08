@@ -129,7 +129,7 @@ button:focus-visible, input:focus-visible { outline: 3px solid #d39b49; outline-
 .island-shell { position: relative; width: min(1100px, 100%); min-height: 100%; margin: auto; padding: calc(32px + var(--safe-t)) calc(44px + var(--safe-r)) calc(28px + var(--safe-b)) calc(44px + var(--safe-l)); display: flex; flex-direction: column; }
 .island-header { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
 .island-brand { color: #687e60; display: flex; align-items: center; gap: 10px; font-size: 15px; letter-spacing: 2px; font-weight: 800; }
-.brand-leaf { color: #83a88a; width: 37px; height: 37px; display: grid; place-items: center; transform: rotate(-12deg); }
+.brand-leaf { color: #83a88a; width: 37px; height: 37px; display: grid; place-items: center; transform: rotate(-12deg); background: transparent; border: 0; padding: 0; border-radius: 50%; cursor: pointer; }
 .brand-leaf svg { width: 33px; height: 33px; }
 .island-brand small { display: block; color: #99a18a; font-size: 7px; letter-spacing: 1.4px; margin-top: 3px; font-weight: 600; }
 .weather { display: flex; align-items: center; gap: 8px; color: #93977d; font-size: 11px; letter-spacing: 1px; }

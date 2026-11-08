@@ -1,16 +1,56 @@
 --- a/client/js/game.mjs
 +++ b/client/js/game.mjs
-@@ -5,7 +5,8 @@
+@@ -4,8 +4,9 @@
+ // 网络层通过 Colyseus SDK 对接权威服务器
  // 重建：python3 deploy/build-game.py
  import * as T3 from '../vendor/three-orig.js';
- import { islandMenu } from './island-ui.mjs';
+-import { islandMenu } from './island-ui.mjs';
 -import { LocalPrediction } from './prediction.mjs?v=3';
++import { islandMenu } from './island-ui.mjs?v=2';
 +import { LocalPrediction } from './prediction.mjs?v=4';
 +import { MaterialAudio } from './material-audio.mjs?v=1';
  import { n as e, t } from '../vendor/colyseus-orig.js';
  import * as n from '@dimforge/rapier2d-compat';
  await n.init();
-@@ -2304,7 +2305,7 @@
+@@ -2141,16 +2142,13 @@
+     }
+   },
+   Dn = `sling.settings`,
+-  On = { guide: !0, overtimeNoGuide: !0 };
++  On = { guide: !0, highQuality: !0 };
+ function kn() {
+   try {
+     let e = JSON.parse(localStorage.getItem(Dn) ?? `{}`);
+     return {
+       guide: typeof e.guide == `boolean` ? e.guide : On.guide,
+-      overtimeNoGuide:
+-        typeof e.overtimeNoGuide == `boolean`
+-          ? e.overtimeNoGuide
+-          : On.overtimeNoGuide,
++      highQuality: typeof e.highQuality == `boolean` ? e.highQuality : On.highQuality,
+     };
+   } catch {
+     return { ...On };
+@@ -2164,7 +2162,7 @@
+   } catch {}
+ }
+ function jn(e) {
+-  return U.guide && !(e && U.overtimeNoGuide);
++  return U.guide && !e;
+ }
+ function Mn(e) {
+   return (
+@@ -2193,8 +2191,7 @@
+ }
+ function In(e, t) {
+   (e.ui.flash(`加时赛`, `warn`), e.sfx.go());
+-  let n = U.guide && !jn(!0);
+-  e.ui.toast(`加时 ${t} 秒：先领先的一方获胜${n ? ` · 辅助线已关闭` : ``}`, {
++  e.ui.toast(`加时 ${t} 秒：辅助线已关闭 · 先领先的一方获胜`, {
+     ms: 2600,
+   });
+ }
+@@ -2304,7 +2301,7 @@
            onShoot: (e) => {
              let t = this.engine.shoot(0, e);
              t.ok
@@ -19,7 +59,7 @@
                  this.guide?.finish())
                : (this.engine.drop(0, e.px, e.py),
                  i.toast(
-@@ -2818,7 +2819,7 @@
+@@ -2818,7 +2815,7 @@
            if (predicted) a.launch(t.power, zn(i, e.px, e.py));
            (this.room.send(`shoot`, { ...e, seq }),
              (this.released = { aim: { ...t }, seq, at: performance.now() }),
@@ -28,7 +68,7 @@
              this.guide.finish(),
              this.hinted || ((this.hinted = !0), o.hint(null)));
          },
-@@ -2947,6 +2948,7 @@
+@@ -2947,6 +2944,7 @@
                a: Number.isFinite(e.a) ? e.a : 0,
                color: e.c,
                vx: e.vx, vy: e.vy, av: e.av,
@@ -36,7 +76,76 @@
                launchStep: e.launchStep, launchCx: e.launchCx,
                launchPx: e.launchPx, launchPy: e.launchPy, launchSide: e.launchSide,
                held: e.held === 0 || e.held === 1 ? e.held : void 0,
-@@ -4703,6 +4705,7 @@
+@@ -3790,7 +3788,7 @@
+           <li><i>2</i><span><b>实时对战，不分回合</b>：双方随时出手，比谁又快又准。<b>颜色不代表归属</b>，落在你半场的冰球都由你操作。</span></li>
+           <li><i>3</i><span>按住自己半场里停下（或慢慢滑动）的冰球，拖向弹力带，压上带子后往后拉，松手发射。一次只能拿一枚。</span></li>
+           <li><i>4</i><span>像弹弓一样：正后方拉直射，往右后方拉就往左前方斜射。手指往侧面挪一点，方向就跟着变一点；冰球拉满后手指还能继续往后拉，拉得越远，方向调得越细。拉伸距离决定力度。</span></li>
+-          <li><i>5</i><span><b>先把自己半场清空的一方获胜</b>；常规时间 3 分钟，时间到时半场剩余较少的一方获胜。剩余相同进入 60 秒<b>加时赛</b>：先领先的一方获胜（默认关闭辅助线，可在设置中调整）。</span></li>
++          <li><i>5</i><span><b>先把自己半场清空的一方获胜</b>；常规时间 3 分钟，时间到时半场剩余较少的一方获胜。剩余相同进入 60 秒<b>加时赛</b>：双方不显示辅助线，先领先的一方获胜。</span></li>
+           <li><i>6</i><span>电脑上按 Esc 或右键可以取消当前瞄准；人机对战中按 Esc 暂停。</span></li>
+         </ul>
+         <div class="stack" style="margin-top:18px"><button class="btn btn-wood" data-act="back">知道了</button></div>
+@@ -3800,16 +3798,16 @@
+     <section class="screen" data-screen="settings">
+       <div class="panel">
+         <button class="icon-btn back" data-act="back" aria-label="返回" style="background:rgba(0,0,0,.06);color:var(--ink)">${G.back}</button>
+-        <h2 style="text-align:center">小岛设置</h2>
+-        <p class="sub" style="text-align:center">关掉辅助线，全凭手感瞄准，挑战更高难度</p>
++        <h2 style="text-align:center">小木桌设置</h2>
++        <p class="sub" style="text-align:center">把画面和手感，调成你喜欢的样子</p>
+         <div class="settings">
+           <label class="setting">
+-            <span class="txt"><b>瞄准辅助线</b><small>拉伸时显示发射方向与力度的预测虚线。关闭后双方的虚线都不显示，力度条保留</small></span>
+-            <input type="checkbox" class="switch" data-set="guide">
++            <span class="txt"><b>高清棋盘</b><small>让棋子边缘、木纹和阴影更清楚。设备发热或不够流畅时，可以关闭</small></span>
++            <input type="checkbox" class="switch" data-set="highQuality">
+           </label>
+           <label class="setting">
+-            <span class="txt"><b>加时赛关闭辅助线</b><small>常规时间结束时双方剩余相同，进入 60 秒加时赛，先领先的一方获胜。开启后加时赛中不显示辅助线</small></span>
+-            <input type="checkbox" class="switch" data-set="overtimeNoGuide">
++            <span class="txt"><b>瞄准辅助线</b><small>常规时间拉伸时显示预测虚线，力度条始终保留。加时赛双方自动隐藏辅助线</small></span>
++            <input type="checkbox" class="switch" data-set="guide">
+           </label>
+         </div>
+         <div class="stack" style="margin-top:18px"><button class="btn btn-wood" data-act="back">完成</button></div>
+@@ -3879,6 +3877,11 @@
+                 break;
+               case `help`:
+                 this.show(`help`);
++                break;
++              case `chlx-note`:
++                this.showDialog(`被你发现了 · Chlx`,
++                  `广告位招租，快乐免费。Chlx 在桌角留了个签名，祝你下一球刚好穿门。`,
++                  [{ label: `收好纸条`, kind: `wood`, onClick: () => this.show(`menu`) }]);
+                 break;
+               case `settings`:
+                 (this.refreshSettings(), this.show(`settings`));
+@@ -3927,6 +3930,7 @@
+       for (let t of e.querySelectorAll(`[data-set]`))
+         t.addEventListener(`change`, () => {
+           (An({ [t.dataset.set]: t.checked }), this.refreshSettings());
++          if (t.dataset.set === `highQuality`) this.h.onQualityChange();
+         });
+       for (let t of e.querySelectorAll(`[data-period]`))
+         t.addEventListener(`click`, () => this.loadBoard(t.dataset.period));
+@@ -3936,8 +3940,6 @@
+       for (let e of this.root.querySelectorAll(`[data-set]`)) {
+         let t = e.dataset.set;
+         e.checked = U[t];
+-        let n = t === `overtimeNoGuide` && !U.guide;
+-        ((e.disabled = n), e.closest(`.setting`)?.classList.toggle(`muted`, n));
+       }
+     }
+     loadBoard(e) {
+@@ -4477,6 +4479,7 @@
+           onCreateFriend: () => this.createFriendRoom(),
+           onJoinFriend: (e) => this.joinFriendRoom(e),
+           onMenuButton: () => this.match?.onMenu(),
++          onQualityChange: () => this.scene.resize(this.scene.width, this.scene.height),
+           loadBoard: (e) => Jn(e),
+         })),
+         (this.ctx = {
+@@ -4703,6 +4706,7 @@
      ctx = null;
      master = null;
      noise = null;
@@ -44,7 +153,7 @@
      last = new Map();
      voices = [];
      _enabled = !0;
-@@ -4725,6 +4728,7 @@
+@@ -4725,6 +4729,7 @@
            o = a.getChannelData(0);
          for (let e = 0; e < i; e++) o[e] = Math.random() * 2 - 1;
          ((this.ctx = t), (this.master = r), (this.noise = a));
@@ -52,7 +161,7 @@
        }
        this.ctx.state === `suspended` && this.ctx.resume();
      }
-@@ -4794,79 +4798,26 @@
+@@ -4794,79 +4799,26 @@
          l.start(t),
          l.stop(t + a + 0.02));
      }
@@ -148,7 +257,289 @@
      }
      turn(e) {
        let t = this.ready();
-@@ -5638,10 +5589,10 @@
+@@ -5068,6 +5020,38 @@
+   let n = parseInt(e.slice(1), 16);
+   return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${t.toFixed(3)})`;
+ }
++// 归一化纹路让颜色与高度图在不同分辨率下仍然对齐；只在建场时绘制。
++function fineWoodGrain(ctx, width, height, dark, light, seed, vertical = false) {
++  const random = sr(seed);
++  ctx.save();
++  ctx.scale(width / 512, height / 512);
++  if (vertical) {
++    ctx.translate(512, 0);
++    ctx.rotate(Math.PI / 2);
++  }
++  for (let row = -2; row < 222; row++) {
++    const y = row * 512 / 220 + (random() - 0.5) * 0.8;
++    ctx.strokeStyle = pr(random() < 0.2 ? light : dark, 0.07 + random() * 0.11);
++    ctx.lineWidth = 0.4 + random() * 0.55;
++    ctx.beginPath();
++    for (let x = -8; x <= 520; x += 8) {
++      const bend = 2.2 * Math.sin(x * Math.PI * 2 / 512 + y * 0.018) +
++        0.45 * Math.sin(x * Math.PI * 6 / 512 + y * 0.031);
++      if (x === -8) ctx.moveTo(x, y + bend);
++      else ctx.lineTo(x, y + bend);
++    }
++    ctx.stroke();
++  }
++  ctx.restore();
++}
++function boardRelief() {
++  const [canvas, ctx] = cr(512, 832);
++  ctx.fillStyle = '#808080';
++  ctx.fillRect(0, 0, 512, 832);
++  fineWoodGrain(ctx, 512, 832, '#555555', '#aaaaaa', 42, true);
++  // 高度是线性数据，不能走 lr() 的 sRGB 颜色转换。
++  return new de(canvas);
++}
+ function mr() {
+   let e = Math.round(T * 2 * 56),
+     t = Math.round(E * 2 * 56),
+@@ -5076,33 +5060,7 @@
+     a = (e) => (e + T) * 56,
+     o = (e) => (E - e) * 56;
+   ((r.fillStyle = `#e6d5b0`), r.fillRect(0, 0, e, t));
+-  for (let n = 0; n < 70; n++) {
+-    let n = i() * e,
+-      a = i() * t,
+-      o = 80 + i() * 380,
+-      s = r.createRadialGradient(n, a, 0, n, a, o),
+-      c = i() < 0.55;
+-    (s.addColorStop(0, c ? `rgba(130,145,99,0.035)` : `rgba(255,251,226,0.08)`),
+-      s.addColorStop(1, `rgba(0,0,0,0)`),
+-      (r.fillStyle = s),
+-      r.fillRect(0, 0, e, t));
+-  }
+-  for (let n = 0; n < 26e3; n++) {
+-    let n = i() * e,
+-      a = i() * t,
+-      o = 2 + i() * 9,
+-      s = i() * Math.PI;
+-    ((r.strokeStyle =
+-      i() < 0.5
+-        ? `rgba(142,132,99,${0.015 + i() * 0.025})`
+-        : `rgba(255,255,237,${0.03 + i() * 0.04})`),
+-      (r.lineWidth = 0.6 + i() * 0.8),
+-      r.beginPath(),
+-      r.moveTo(n, a),
+-      r.lineTo(n + Math.cos(s) * o, a + Math.sin(s) * o),
+-      r.stroke());
+-  }
+-  ur(r, e, t, 5, i);
++  fineWoodGrain(r, e, t, '#ab8b5e', '#fff1cd', 42, true);
+   let s = `rgba(126,149,111,0.42)`,
+     c = `rgba(92,128,91,0.76)`;
+   for (let e of [0, 1]) {
+@@ -5133,10 +5091,10 @@
+     ((r.textAlign = `center`),
+       (r.textBaseline = `middle`),
+       (r.fillStyle = c),
+-      (r.font = `900 ${0.98 * 56}px "PingFang SC","Microsoft YaHei","Noto Sans SC",sans-serif`),
+-      r.fillText(`小岛冰球`, 0, -12.32),
++      (r.font = `900 ${0.8 * 56}px "PingFang SC","Microsoft YaHei","Noto Sans SC",sans-serif`),
++      r.fillText(`广告位招租`, 0, -12.32),
+       (r.font = `700 23.52px "Avenir Next","Segoe UI",Arial,sans-serif`),
+-      gr(r, `ISLAND · PUCK`, 0, 43.68, 0.1 * 56),
++      gr(r, `PLAY · REPEAT`, 0, 43.68, 0.1 * 56),
+       r.restore(),
+       (r.fillStyle = s));
+     let l = t * be;
+@@ -5153,6 +5111,14 @@
+       r.closePath(),
+       r.fill());
+   }
++  r.save();
++  r.translate(a(7.7), o(-13.5));
++  r.rotate(-0.08);
++  r.font = `italic 600 23px "Avenir Next","Segoe UI",sans-serif`;
++  r.textAlign = `right`;
++  r.fillStyle = `rgba(99,114,79,0.6)`;
++  r.fillText(`Chlx`, 0, 0);
++  r.restore();
+   r.fillStyle = `rgba(126,149,111,0.38)`;
+   for (let t of [-1, 1]) hr(r, 0, o(t * (D + 0.18)) - 1.68, e, 3.36, i);
+   let l = (e, t, n, i, a, o) => {
+@@ -5210,34 +5176,53 @@
+   }
+   (e.closePath(), e.fill());
+ }
+-function vr(e, t) {
+-  const [canvas, ctx] = cr(256, 256);
+-  const coral = e === `maple`;
+-  dr(ctx, 256, 256, {
+-    base: coral ? `#ce8867` : `#51876a`,
+-    dark: coral ? `#b47c61` : `#477357`,
+-    light: coral ? `#f0c4a0` : `#a6c39c`,
+-    lines: 15, wave: 0.6, seed: t,
+-  });
+-  ctx.strokeStyle = coral ? `#f5d2a8` : `#bbd5ac`;
+-  ctx.lineWidth = 3;
++function puckMark(ctx, coral, relief = false) {
++  ctx.strokeStyle = relief ? '#606060' : coral ? '#f5d2a8' : '#bbd5ac';
++  ctx.lineWidth = 2.4;
+   ctx.beginPath();
+   ctx.arc(128, 128, 89, 0, Math.PI * 2);
+   ctx.stroke();
+-  // A small carved leaf on each puck, readable even at phone sizes.
+-  ctx.fillStyle = coral ? `#f7ddba` : `#d6e4bc`;
++  ctx.fillStyle = relief ? '#686868' : coral ? '#f7ddba' : '#d6e4bc';
+   ctx.beginPath();
+   ctx.moveTo(103, 145);
+   ctx.bezierCurveTo(85, 107, 116, 82, 158, 94);
+   ctx.bezierCurveTo(171, 134, 139, 163, 103, 145);
+   ctx.fill();
+-  ctx.strokeStyle = coral ? `#c18a69` : `#628b69`;
+-  ctx.lineWidth = 5;
++  ctx.strokeStyle = relief ? '#777777' : coral ? '#c18a69' : '#628b69';
++  ctx.lineWidth = 4;
+   ctx.lineCap = `round`;
+   ctx.beginPath();
+   ctx.moveTo(99, 158);
+   ctx.lineTo(141, 112);
+   ctx.stroke();
++}
++function puckRelief() {
++  const [canvas, ctx] = cr(512, 512);
++  ctx.fillStyle = '#808080';
++  ctx.fillRect(0, 0, 512, 512);
++  ctx.scale(2, 2);
++  // 外缘浅车槽与叶形凹刻共享一个高度图，所有颜色/木纹变体复用。
++  ctx.strokeStyle = '#707070';
++  ctx.lineWidth = 0.9;
++  ctx.beginPath();
++  ctx.arc(128, 128, 117, 0, Math.PI * 2);
++  ctx.stroke();
++  puckMark(ctx, false, true);
++  return new de(canvas);
++}
++function vr(e, t) {
++  const [canvas, ctx] = cr(512, 512);
++  const coral = e === `maple`;
++  dr(ctx, 512, 512, {
++    base: coral ? `#ce8867` : `#51876a`,
++    dark: coral ? `#ac7155` : `#3d6c50`,
++    light: coral ? `#e8b792` : `#91b390`,
++    lines: 30, wave: 0.35, seed: t,
++  });
++  fineWoodGrain(ctx, 512, 512,
++    coral ? '#9b654d' : '#365e45', coral ? '#ebc39c' : '#a6c39c', t);
++  ctx.scale(2, 2);
++  puckMark(ctx, coral);
+   return lr(canvas);
+ }
+ function yr() {
+@@ -5299,31 +5284,52 @@
+ function Q(e, t, n = 0, r = new v()) {
+   return r.set(e, n, -t);
+ }
+-function Er(e, t, n, r = 9, i = 5.5) {
+-  let a = e.getAttribute(`position`),
+-    o = e.getAttribute(`normal`),
+-    s = new Float32Array(a.count * 2),
+-    c = n.x * 0.37 + n.z * 0.11;
+-  for (let e = 0; e < a.count; e++) {
+-    let l = a.getX(e) + n.x,
+-      u = a.getY(e) + n.y,
+-      d = a.getZ(e) + n.z,
+-      f = Math.abs(o.getX(e)),
+-      p = Math.abs(o.getY(e)),
+-      m = Math.abs(o.getZ(e)),
+-      h,
+-      g;
+-    (p >= f && p >= m
+-      ? t === `z`
+-        ? ((h = d / r), (g = l / i))
+-        : ((h = l / r), (g = d / i))
+-      : f >= m
+-        ? ((h = d / r), (g = u / i))
+-        : ((h = l / r), (g = u / i)),
+-      (s[e * 2] = h + c),
+-      (s[e * 2 + 1] = g + c * 0.5));
++function Er(e, t) {
++  const positions = e.getAttribute('position'), normals = e.getAttribute('normal');
++  const uv = new Float32Array(positions.count * 2), alongZ = t === 'z';
++  const params = e.type === 'RoundedBoxGeometry' ? e.parameters : null;
++  let halfWidth, halfHeight, halfLength, centerCross = 0, centerY = 0, centerLong = 0;
++  if (params) {
++    halfWidth = (alongZ ? params.width : params.depth) / 2;
++    halfHeight = params.height / 2;
++    halfLength = (alongZ ? params.depth : params.width) / 2;
++  } else {
++    e.computeBoundingBox();
++    const { min, max } = e.boundingBox, axis = alongZ ? 'x' : 'z', longAxis = alongZ ? 'z' : 'x';
++    halfWidth = (max[axis] - min[axis]) / 2;
++    halfHeight = (max.y - min.y) / 2;
++    halfLength = (max[longAxis] - min[longAxis]) / 2;
++    centerCross = (max[axis] + min[axis]) / 2;
++    centerY = (max.y + min.y) / 2;
++    centerLong = (max[longAxis] + min[longAxis]) / 2;
+   }
+-  e.setAttribute(`uv`, new b(s, 2));
++  const perimeter = 4 * (halfWidth + halfHeight);
++  for (let vertex = 0; vertex < positions.count; vertex++) {
++    const cross = (alongZ ? positions.getX(vertex) : positions.getZ(vertex)) - centerCross;
++    const y = positions.getY(vertex) - centerY;
++    const longitudinal = (alongZ ? positions.getZ(vertex) : positions.getX(vertex)) - centerLong;
++    const endNormal = alongZ ? normals.getZ(vertex) : normals.getX(vertex);
++    if (Math.abs(endNormal) > 0.999999) {
++      // 平坦端盖单独展开；外框端盖位于木条接头内。
++      uv[vertex * 2] = (cross + halfWidth) / (2 * halfWidth);
++      uv[vertex * 2 + 1] = (y + halfHeight) / (2 * halfHeight);
++      continue;
++    }
++    // 固定长轴顺纹，截面按周长展开。倒角位置连续投影到矩形边界，
++    // 不再因法线主轴切换改变 UV；唯一环绕接缝位于木条底面。
++    const scale = Math.max(Math.abs(cross) / halfWidth, Math.abs(y) / halfHeight, 1e-8);
++    const px = cross / scale, py = y / scale;
++    let distance;
++    if (Math.abs(cross) / halfWidth >= Math.abs(y) / halfHeight) {
++      distance = cross >= 0 ? halfWidth + halfHeight + py
++        : 3 * halfWidth + 3 * halfHeight - py;
++    } else if (y >= 0) distance = 2 * (halfWidth + halfHeight) - px;
++    else distance = px >= 0 ? px : perimeter + px;
++    // 非无缝木纹沿整条木材只铺一次，避免重复边缘形成矩形断缝。
++    uv[vertex * 2] = (longitudinal + halfLength) / (2 * halfLength);
++    uv[vertex * 2 + 1] = distance / perimeter;
++  }
++  e.setAttribute('uv', new b(uv, 2));
+ }
+ function Dr(e, t, n) {
+   let r = new le(e, {
+@@ -5355,12 +5361,12 @@
+   n.anisotropy = e;
+   let r = new he({
+       map: n,
+-      roughness: 0.82,
+-      clearcoat: 0.08,
+-      clearcoatRoughness: 0.5,
++      roughness: 0.6,
++      clearcoat: 0.18,
++      clearcoatRoughness: 0.4,
+     }),
+     i = (e, n, i) => {
+-      Er(e, i, n);
++      Er(e, i);
+       let a = new g(e, r);
+       return (
+         a.position.copy(n),
+@@ -5377,11 +5383,13 @@
+     i(new fe(Y, a, s, 4, 0.14), new v(e * (T + Y / 2), o, 0), `z`);
+   for (let e of [-1, 1])
+     i(new fe(T * 2 + 0.02, a, Y, 4, 0.14), new v(0, o, e * (E + Y / 2)), `x`);
+-  let c = mr();
++  let c = mr(),
++    relief = boardRelief();
+   c.anisotropy = e;
++  relief.anisotropy = e;
+   let l = new g(
+     new p(T * 2, E * 2),
+-    new _({ map: c, roughness: 0.92, metalness: 0 }),
++    new _({ map: c, bumpMap: relief, bumpScale: 0.025, roughness: 0.72, metalness: 0 }),
+   );
+   ((l.rotation.x = -Math.PI / 2), (l.receiveShadow = !0), t.add(l));
+   let d = ye + D;
+@@ -5638,10 +5646,10 @@
      let n = this.f * e;
      this.vibs.push({
        cx: n,
@@ -162,7 +553,7 @@
      });
    }
    update(e, t) {
-@@ -5914,7 +5865,7 @@
+@@ -5914,7 +5922,7 @@
      q = new r();
      s = new v();
      time = 0;
@@ -171,7 +562,7 @@
      constructor(t = 12) {
        let n = t * e.PER,
          r = new S(0.92, 32).rotateX(-Math.PI / 2);
-@@ -5954,19 +5905,19 @@
+@@ -5954,19 +5962,19 @@
          let i = n[0],
            a = n[2],
            o = Math.hypot(i.x - a.x, i.y - a.y) / Math.max(0.001, i.t - a.t);
@@ -195,7 +586,182 @@
              (this.tint[r * 3] = c ? 0.12 : 0.98),
              (this.tint[r * 3 + 1] = c ? 0.1 : 0.88),
              (this.tint[r * 3 + 2] = c ? 0.09 : 0.68),
-@@ -6270,32 +6221,13 @@
+@@ -5981,40 +5989,41 @@
+   };
+ function Vr() {
+   let e = [],
+-    t = 0.12,
++    t = 0.08,
+     n = X;
+-  (e.push(new i(0, 0)), e.push(new i(0.88, 0)));
++  (e.push(new i(0, 0)), e.push(new i(1 - t, 0)));
+   for (let n = 1; n <= 6; n++) {
+     let r = (n / 6) * (Math.PI / 2);
+-    e.push(new i(0.88 + Math.sin(r) * t, t - Math.cos(r) * t));
++    e.push(new i(1 - t + Math.sin(r) * t, t - Math.cos(r) * t));
+   }
+   e.push(new i(1, n - t));
+   for (let r = 1; r <= 6; r++) {
+     let a = (r / 6) * (Math.PI / 2);
+-    e.push(new i(0.88 + Math.cos(a) * t, n - t + Math.sin(a) * t));
++    e.push(new i(1 - t + Math.cos(a) * t, n - t + Math.sin(a) * t));
+   }
+-  return (e.push(new i(0.86, n)), new _e(e, 56));
++  return (e.push(new i(0.9, n)), new _e(e, 56));
+ }
+ var Hr = class {
+     group = new ne();
+     views = new Map();
+     sideGeo = Vr();
+-    topGeo = new S(0.87, 56).rotateX(-Math.PI / 2);
++    topGeo = new S(0.91, 56).rotateX(-Math.PI / 2);
+     blobGeo = new p(2.7, 2.7).rotateX(-Math.PI / 2);
+     ringGeo = new p(3.1, 3.1).rotateX(-Math.PI / 2);
+     blobTex = yr();
+     ringTex = br();
++    topRelief = puckRelief();
+     sideMats;
+     topMats;
+     tmp = new v();
+     constructor(e) {
+       let t = fr(
+           {
+-            base: `#548368`,
+-            dark: `#3f6b53`,
++            base: `#51876a`,
++            dark: `#3d6c50`,
+             light: `#87ab8b`,
+             lines: 30,
+-            wave: 0.5,
++            wave: 0.25,
+             seed: 21,
+           },
+           512,
+@@ -6022,29 +6031,30 @@
+         ),
+         n = fr(
+           {
+-            base: `#c79072`,
+-            dark: `#a76f54`,
++            base: `#ce8867`,
++            dark: `#ac7155`,
+             light: `#e7ba97`,
+             lines: 30,
+-            wave: 0.5,
++            wave: 0.25,
+             seed: 22,
+           },
+           512,
+           128,
+         );
+-      for (let r of [t, n]) ((r.anisotropy = e), r.repeat.set(3, 1));
++      for (let r of [t, n]) r.anisotropy = e;
++      this.topRelief.anisotropy = e;
+       ((this.sideMats = [
+         new he({
+           map: t,
+-          roughness: 0.85,
+-          clearcoat: 0.08,
+-          clearcoatRoughness: 0.22,
++          roughness: 0.52,
++          clearcoat: 0.22,
++          clearcoatRoughness: 0.32,
+         }),
+         new he({
+           map: n,
+-          roughness: 0.85,
+-          clearcoat: 0.08,
+-          clearcoatRoughness: 0.3,
++          roughness: 0.52,
++          clearcoat: 0.22,
++          clearcoatRoughness: 0.32,
+         }),
+       ]),
+         (this.topMats = [0, 1].map((t) =>
+@@ -6054,9 +6064,11 @@
+               (r.anisotropy = e),
+               new he({
+                 map: r,
+-                roughness: 0.86,
+-                clearcoat: 0.08,
+-                clearcoatRoughness: 0.22,
++                bumpMap: this.topRelief,
++                bumpScale: 0.035,
++                roughness: 0.6,
++                clearcoat: 0.2,
++                clearcoatRoughness: 0.35,
+               })
+             );
+           }),
+@@ -6137,6 +6149,7 @@
+   Ur = 1 + Tr * 0.9,
+   Wr = class {
+     renderer;
++    keyLight;
+     scene = new c();
+     camera = new s(30, 1, 0.5, 400);
+     onPass = null;
+@@ -6184,16 +6197,16 @@
+       this.effectsOn = !window.matchMedia?.(`(prefers-reduced-motion: reduce)`)
+         .matches;
+       let r = this.scene;
+-      ((r.background = new w(0xdce6c7)), (r.fog = new oe(0xdce6c7, 70, 150)));
++      // 雾仅用于远处草地；不能覆盖正常对局距离内的棋盘，避免表面泛白。
++      ((r.background = new w(0xdce6c7)), (r.fog = new oe(0xdce6c7, 130, 240)));
+       let i = new ue(t);
+       ((r.environment = i.fromScene(new se(), 0.04).texture),
+         (r.environmentIntensity = 0.35),
+         i.dispose(),
+-        r.add(new te(0xfff9e8, 0xa8bc91, 0.95)));
++        r.add(new te(0xfff9e8, 0xa8bc91, 0.75)));
+       let a = new ee(0xfff6df, 1.8);
+       (a.position.set(-11, 34, 5), (a.castShadow = !0));
+-      let o = Math.min(window.innerWidth, window.innerHeight) < 600;
+-      a.shadow.mapSize.set(o ? 1024 : 1536, o ? 1024 : 1536);
++      this.keyLight = a;
+       let s = a.shadow.camera;
+       ((s.left = -15),
+         (s.right = 15),
+@@ -6201,9 +6214,9 @@
+         (s.bottom = -20),
+         (s.near = 5),
+         (s.far = 70),
+-        (a.shadow.radius = 5),
+-        (a.shadow.bias = -4e-4),
+-        (a.shadow.normalBias = 0.025),
++        (a.shadow.radius = 1.5),
++        (a.shadow.bias = -2e-4),
++        (a.shadow.normalBias = 0.018),
+         r.add(a, a.target));
+       let c = new ee(16769730, 0.45);
+       (c.position.set(14, 16, -8),
+@@ -6232,13 +6245,22 @@
+     resize(e, t) {
+       ((this.width = Math.max(1, e)),
+         (this.height = Math.max(1, t)));
+-      // 限制 WebGL 像素量；DOM 界面仍使用设备的原生分辨率。
++      // 高清默认按 2x 绘制，保留像素预算；流畅档沿用较低的填充开销。
++      const compact = Math.min(this.width, this.height) < 600;
+       const ratio = Math.min(
+         window.devicePixelRatio || 1,
+-        Math.min(this.width, this.height) < 600 ? 1.5 : 2,
+-        Math.sqrt(2500000 / (this.width * this.height)),
++        U.highQuality ? 2 : compact ? 1.5 : 2,
++        Math.sqrt((U.highQuality ? 5000000 : 2500000) / (this.width * this.height)),
+       );
+       if (this.renderer.getPixelRatio() !== ratio) this.renderer.setPixelRatio(ratio);
++      const shadowSize = U.highQuality ? (compact ? 1536 : 2048) : (compact ? 1024 : 1536);
++      const shadow = this.keyLight.shadow;
++      if (shadow.mapSize.x !== shadowSize) {
++        shadow.mapSize.set(shadowSize, shadowSize);
++        shadow.map?.dispose();
++        shadow.map = null;
++        this.renderer.shadowMap.needsUpdate = !0;
++      }
+       (this.renderer.setSize(this.width, this.height, !1),
+         this.sparks.setScale(
+           this.height * this.renderer.getPixelRatio() * 0.55,
+@@ -6270,32 +6292,13 @@
          y: ((1 - r.y) / 2) * this.height,
        };
      }
