@@ -6,21 +6,22 @@
       name="viewport"
       content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover"
     />
-    <meta name="theme-color" content="#17110d" />
-    <meta name="description" content="2.5D 桌面弹射冰球：实时对战，人机 / 在线匹配 / 好友房" />
-    <title>桌上弹射冰球</title>
+    <meta name="theme-color" content="#f5f3e8" />
+    <meta name="description" content="小岛冰球俱乐部：一张小木桌，一场好时光。人机对战、在线匹配，或邀请朋友来一场弹射冰球。" />
+    <title>小岛冰球 · 桌上弹射冰球</title>
     <link
       rel="icon"
-      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect x='4' y='4' width='56' height='56' rx='12' fill='%23e3c79b'/%3E%3Crect x='10' y='10' width='44' height='44' rx='6' fill='%23b98d5e'/%3E%3Crect x='10' y='30' width='44' height='4' fill='%23e3c79b'/%3E%3Ccircle cx='32' cy='46' r='7' fill='%231d1a18'/%3E%3Ccircle cx='32' cy='18' r='7' fill='%23f1dcb4'/%3E%3C/svg%3E"
+      href="./assets/island-mark.svg"
     />
     <script type="importmap">
       { "imports": { "@dimforge/rapier2d-compat": "./vendor/rapier.mjs?v=2" } }
     </script>
-    <script type="module" crossorigin src="./js/game.mjs?v=16-contact"></script>
+    <script type="module" crossorigin src="./js/game.mjs?v=16-contact-island"></script>
     <link rel="modulepreload" crossorigin href="./vendor/colyseus-orig.js">
     <link rel="modulepreload" crossorigin href="./vendor/rapier.mjs?v=2">
     <link rel="modulepreload" crossorigin href="./vendor/three-orig.js">
     <link rel="stylesheet" crossorigin href="./css/orig.css">
+    <link rel="stylesheet" href="./css/island.css?v=1">
   </head>
   <body>
     <div id="app">
@@ -28,9 +29,9 @@
       <div id="ui"></div>
       <div id="boot" class="boot">
         <div class="boot-card">
-          <div class="boot-title">桌上弹射冰球</div>
+          <div class="boot-title">小岛冰球</div>
           <div class="boot-bar"><i></i></div>
-          <div class="boot-text">正在加载…</div>
+          <div class="boot-text">正在准备小岛上的好时光…</div>
         </div>
       </div>
     </div>
