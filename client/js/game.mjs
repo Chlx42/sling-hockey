@@ -3880,7 +3880,7 @@ var ir = class {
                 break;
               case `chlx-note`:
                 this.showDialog(`Chlx`,
-                  `再玩一局就收工。`,
+                  `天天开心 :3`,
                   [{ label: `行`, kind: `wood`, onClick: () => this.show(`menu`) }]);
                 break;
               case `settings`:
