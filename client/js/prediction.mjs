@@ -1,6 +1,8 @@
 // 展示层预测：只发送操作，位置与胜负始终由服务器决定。
 export const MAX_PREDICTION_MS = 250;
 const STEP_MS = 1000 / 120;
+const FX_MAX_AGE_MS = 50;
+const FX_REPEAT_MS = 100;
 const angleDelta = (from, to) => Math.atan2(Math.sin(to - from), Math.cos(to - from));
 
 export class LocalPrediction {
@@ -20,16 +22,24 @@ export class LocalPrediction {
     this.time = 0;
     this.lastSample = null;
     this.steps = 0;
+    this.stepEvents = [];
+    this.feedbackThrough = -Infinity;
+    this.lastImpact = new Map();
   }
 
   receive(pucks, time, phase = 'playing', acknowledgements = {}) {
     this.enabled = pucks.length > 0 && pucks.every((p) =>
       [p.x, p.y, p.a, p.vx, p.vy, p.av].every(Number.isFinite));
-    if (!this.enabled) return;
+    if (!this.enabled) {
+      this.clear();
+      return;
+    }
     if (this.snapshot && time < this.snapshot.time && phase === this.snapshot.phase) return;
     if (phase !== 'playing' || phase !== this.snapshot?.phase) {
       this.commands.clear();
       this.localHold = null;
+      this.feedbackThrough = -Infinity;
+      this.lastImpact.clear();
     }
     this.snapshot = { pucks, time, phase, ...acknowledgements };
     if (this.localHold && this.localHold.seq <= this.snapshot.inputSeq) this.localHold = null;
@@ -136,7 +146,7 @@ export class LocalPrediction {
     if (index >= 0) Object.assign(this.previous[index], this.current[index]);
   }
 
-  sample(targetTime) {
+  sample(targetTime, impacts = null) {
     if (!this.enabled || !this.snapshot) return null;
     const snap = this.snapshot;
     const target = snap.time + (snap.phase === 'playing'
@@ -159,9 +169,26 @@ export class LocalPrediction {
         }
       }
       [this.previous, this.current] = [this.current, this.previous];
-      this.world.step();
+      const stepTime = this.time + STEP_MS;
+      // 快照重放与后台追帧只修正位置，不补播过期的声音/粒子。
+      const feedback = impacts && stepTime > this.feedbackThrough + 1e-3 &&
+        stepTime >= target - FX_MAX_AGE_MS;
+      this.stepEvents.length = 0;
+      this.world.step(feedback ? this.stepEvents : undefined);
       this.read(this.current);
-      this.time += STEP_MS;
+      this.time = stepTime;
+      if (feedback) {
+        for (const event of this.stepEvents) {
+          const key = event.k === 'puck'
+            ? `puck:${Math.min(event.a, event.b)}:${Math.max(event.a, event.b)}`
+            : `${event.k}:${event.a}:${event.s ?? event.edge ?? ''}:${event.k === 'wall'
+              ? Math.sign(event.edge === 'side' ? event.x : event.y) : ''}`;
+          if (stepTime - (this.lastImpact.get(key) ?? -Infinity) < FX_REPEAT_MS) continue;
+          this.lastImpact.set(key, stepTime);
+          impacts.push(event);
+        }
+      }
+      this.feedbackThrough = Math.max(this.feedbackThrough, stepTime);
       this.steps++;
     }
     // 松手发生在两个固定子步之间时，也立即显示在松手位置。
@@ -211,6 +238,9 @@ export class LocalPrediction {
     this.commands.clear();
     this.localHold = null;
     this.corrections.clear();
+    this.stepEvents.length = 0;
+    this.lastImpact.clear();
+    this.feedbackThrough = -Infinity;
     this.current.length = this.previous.length = this.render.length = 0;
     this.enabled = false;
     this.lastSample = null;

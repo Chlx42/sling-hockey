@@ -14,7 +14,8 @@ var T = 9.5,
   Ee = 0.4,
   De = 0.8,
   Oe = (68 * Math.PI) / 180,
-  ke = 1.15,
+  ke = 1.08,
+  MAX_SHOT_SPEED = 44,
   Ae = Math.PI,
   // 滑动阻力与接触摩擦分开：冰面保留惯性，擦边碰撞能传递旋转。
   je = 0.16,
@@ -175,7 +176,7 @@ function $e(e, t, n, r, i, a, o) {
   return ((o.ax = (s * p) / Ae), (o.ay = (s * m) / Ae), !0);
 }
 function et(e) {
-  return 37 * Math.min(1, Math.max(0, e) / O) ** +ke;
+  return MAX_SHOT_SPEED * Math.min(1, Math.max(0, e) / O) ** +ke;
 }
 function tt(e, t, n, r) {
   let i = Ke(e),
@@ -301,7 +302,7 @@ function ct(e, t, n, r, i) {
     px: o.x,
     py: o.y,
     pull: l,
-    power: Math.min(1, u / 37),
+    power: Math.min(1, u / MAX_SHOT_SPEED),
     dirX: u > 1e-6 ? c.vx / u : 0,
     dirY: u > 1e-6 ? c.vy / u : A(e),
     speed: u,
@@ -559,8 +560,8 @@ var pt = 1,
           let r = n.band[t].sigma !== null;
           if ($e(t, a.x, a.y, s, c, n.band[t], i)) {
             if (!r && e) {
-              let n = -A(t) * c;
-              n > 0.4 && e.push({ k: `band`, x: a.x, y: a.y, v: n, s: t });
+              let speed = -A(t) * c;
+              speed > 0.4 && e.push({ k: `band`, x: a.x, y: a.y, v: speed, s: t, a: n.id });
             }
             ((s += i.ax * k), (c += i.ay * k), (l = !0));
           }
@@ -592,7 +593,8 @@ var pt = 1,
             ),
             this.endLaunch(t));
       }
-      let a = 4.5 * k,
+      // 加快出手，但让低速尾段尽快停稳，避免整盘一直漂移。
+      let a = 6 * k,
         o = 0.8 * k;
       for (let e = 0; e < n; e++) {
         let t = this.bodies[e],

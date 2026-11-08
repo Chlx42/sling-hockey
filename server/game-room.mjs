@@ -57,6 +57,11 @@ export class GameRoom extends Room {
       const hold = this.engine.holds[p.side];
       Object.assign(this.state.aims[p.side], { active: true, puckId: hold.puckId, pull: false, x: hold.x, y: hold.y, cx: hold.x });
     });
+    // 能在本地预测碰撞的客户端无需接收重复特效；旧客户端默认继续接收。
+    this.onMessage('local_fx', (client, enabled) => {
+      const player = this.meta.players.get(client.sessionId);
+      if (player) player.localFx = enabled === true;
+    });
     this.onMessage('aim', (client, m) => {
       const p = this.meta.players.get(client.sessionId);
       if (!this.playing(p)) return;
@@ -244,10 +249,14 @@ export class GameRoom extends Room {
   }
 
   flushEvents() {
+    let needsFx = false;
+    for (const player of this.meta.players.values()) {
+      if (player.alive && !player.localFx) { needsFx = true; break; }
+    }
     for (const ev of this.engine.drainEvents()) {
       switch (ev.type) {
         case 'sfx':
-          if (this.fxQueue.length < MAX_FX_PER_PATCH) {
+          if (needsFx && this.fxQueue.length < MAX_FX_PER_PATCH) {
             this.fxQueue.push([FX_TYPES.indexOf(ev.e.k), quantize(ev.e.x), quantize(ev.e.y), quantize(ev.e.v), ev.e.s ?? -1]);
           }
           break;
@@ -267,10 +276,12 @@ export class GameRoom extends Room {
   }
 
   onBeforePatch() {
-    // 碰撞反馈按快照批量发包，出手/得分仍立即广播。
+    // 只向未启用本地碰撞反馈的客户端发送兼容消息。
     if (this.fxQueue.length) {
-      this.broadcast('fx', this.fxQueue);
-      this.fxQueue = [];
+      for (const player of this.meta.players.values()) {
+        if (player.alive && !player.localFx) player.client.send('fx', this.fxQueue);
+      }
+      this.fxQueue.length = 0;
     }
     // 等待和结算画面不制造纯时间戳补丁；倒计时/重连/玩家信息仍由 Schema 正常同步。
     if (this.phase !== 'playing' && this.snapshotPhase === this.phase) return;

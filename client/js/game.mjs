@@ -4,7 +4,7 @@
 // 网络层通过 Colyseus SDK 对接权威服务器
 // 重建：python3 deploy/build-game.py
 import * as T3 from '../vendor/three-orig.js';
-import { LocalPrediction } from './prediction.mjs?v=2';
+import { LocalPrediction } from './prediction.mjs?v=3';
 import { n as e, t } from '../vendor/colyseus-orig.js';
 import * as n from '@dimforge/rapier2d-compat';
 await n.init();
@@ -24,7 +24,8 @@ var T = 9.5,
   Ee = 0.4,
   De = 0.8,
   Oe = (68 * Math.PI) / 180,
-  ke = 1.15,
+  ke = 1.08,
+  MAX_SHOT_SPEED = 44,
   Ae = Math.PI,
   // 滑动阻力与接触摩擦分开：冰面保留惯性，擦边碰撞能传递旋转。
   je = 0.16,
@@ -185,7 +186,7 @@ function $e(e, t, n, r, i, a, o) {
   return ((o.ax = (s * p) / Ae), (o.ay = (s * m) / Ae), !0);
 }
 function et(e) {
-  return 37 * Math.min(1, Math.max(0, e) / O) ** +ke;
+  return MAX_SHOT_SPEED * Math.min(1, Math.max(0, e) / O) ** +ke;
 }
 function tt(e, t, n, r) {
   let i = Ke(e),
@@ -311,7 +312,7 @@ function ct(e, t, n, r, i) {
     px: o.x,
     py: o.y,
     pull: l,
-    power: Math.min(1, u / 37),
+    power: Math.min(1, u / MAX_SHOT_SPEED),
     dirX: u > 1e-6 ? c.vx / u : 0,
     dirY: u > 1e-6 ? c.vy / u : A(e),
     speed: u,
@@ -569,8 +570,8 @@ var pt = 1,
           let r = n.band[t].sigma !== null;
           if ($e(t, a.x, a.y, s, c, n.band[t], i)) {
             if (!r && e) {
-              let n = -A(t) * c;
-              n > 0.4 && e.push({ k: `band`, x: a.x, y: a.y, v: n, s: t });
+              let speed = -A(t) * c;
+              speed > 0.4 && e.push({ k: `band`, x: a.x, y: a.y, v: speed, s: t, a: n.id });
             }
             ((s += i.ax * k), (c += i.ay * k), (l = !0));
           }
@@ -602,7 +603,8 @@ var pt = 1,
             ),
             this.endLaunch(t));
       }
-      let a = 4.5 * k,
+      // 加快出手，但让低速尾段尽快停稳，避免整盘一直漂移。
+      let a = 6 * k,
         o = 0.8 * k;
       for (let e = 0; e < n; e++) {
         let t = this.bodies[e],
@@ -2779,6 +2781,8 @@ var Yn = class {
     released = null;
     remote = null;
     fx = [];
+    predictedFx = [];
+    localFx = null;
     timeAnchor = { v: 0, at: 0 };
     phase = ``;
     overAt = 0;
@@ -2819,13 +2823,16 @@ var Yn = class {
               : t.reject(Error(e.error || `昵称暂时没能保存，请重试。`)));
         }),
         n.onMessage(`fx`, (e) => {
-          let t = performance.now() + (this.prediction.enabled ? 0 : Xn);
+          if (this.prediction.enabled || this.dropped || this.st?.phase !== `playing`) return;
+          let t = performance.now() + Xn;
           for (let n of e) this.fx.push({ at: t, f: n });
         }),
         n.onMessage(`score`, () => {}),
         n.onMessage(`evt`, (e) => this.onEvt(e)),
         n.onDrop(() => {
           ((this.dropped = !0), this.input.abort(), this.prediction.clear());
+          this.fx.length = this.predictedFx.length = 0;
+          this.localFx = null;
         }),
         n.onReconnect(() => {
           this.dropped = !1;
@@ -2833,6 +2840,8 @@ var Yn = class {
           this.offset = null;
           this.predictionClock = null;
           this.prediction.clear();
+          this.fx.length = this.predictedFx.length = 0;
+          this.localFx = null;
         }),
         n.onLeave((n) => {
           this.leaving ||
@@ -2974,10 +2983,21 @@ var Yn = class {
               : null
             : `not_your_half`;
     }
+    setLocalFx(enabled) {
+      if (this.localFx === enabled) return;
+      this.fx.length = this.predictedFx.length = 0;
+      this.localFx = enabled;
+      this.room.send(`local_fx`, enabled);
+    }
     onState(e) {
       let t = performance.now(),
-        n = e?.serverTime;
-      if (typeof n != `number` || !Number.isFinite(n)) return;
+        serverTime = e?.serverTime,
+        n = serverTime - (Number.isFinite(e?.physicsDelay) ? e.physicsDelay : 0);
+      if (!Number.isFinite(serverTime) || !Number.isFinite(n)) {
+        this.prediction.clear();
+        this.setLocalFx(false);
+        return;
+      }
       let r = [],
         i = !0;
       if (
@@ -2996,9 +3016,12 @@ var Yn = class {
             }));
         }),
         !i || r.length === 0)
-      )
+      ) {
+        this.prediction.clear();
+        this.setLocalFx(false);
         return;
-      let a = n - t,
+      }
+      let a = serverTime - t,
         o = this.offset;
       this.offset =
         o === null || !Number.isFinite(o) || a > o ? a : o + (a - o) * 0.02;
@@ -3015,6 +3038,7 @@ var Yn = class {
       this.inputSeq = Math.max(this.inputSeq, me?.inputSeq || 0);
       this.prediction.receive(r, n, e.phase, { inputSeq: me?.inputSeq, shots });
       this.predictionClock = { time: n, at: t };
+      this.setLocalFx(this.prediction.enabled);
       let c = e.timeLeft / 10;
       c !== this.timeAnchor.v && (this.timeAnchor = { v: c, at: t });
     }
@@ -3165,8 +3189,10 @@ var Yn = class {
       )
         return { pucks: this.render };
       this.handlePhase(n, t);
+      this.predictedFx.length = 0;
       let r = this.prediction.enabled ? this.predictionTime(t) : t + this.offset - Xn,
-        i = this.prediction.sample(r) ?? this.sample(r);
+        i = this.prediction.sample(r, this.predictedFx) ?? this.sample(r);
+      for (const impact of this.predictedFx) Bn(this.ctx, impact);
       this.render = i;
       for (let e of [0, 1]) {
         let t = this.pending[e];
@@ -3281,6 +3307,7 @@ var Yn = class {
         a !== this.phase)
       ) {
         let s = this.phase;
+        this.fx.length = this.predictedFx.length = 0;
         if (((this.phase = a), a === `waiting`)) {
           if ((n.setHud(!1), this.mode === `friend`)) {
             let e = new URL(location.href);
@@ -3555,6 +3582,7 @@ var Yn = class {
         (this.leaving = !0),
         window.clearInterval(this.pingTimer),
         this.prediction.clear(),
+        (this.fx.length = this.predictedFx.length = 0),
         this.guide.hide(),
         this.input.dispose(),
         this.ctx.ui.notice(null),
@@ -4859,17 +4887,17 @@ var ir = class {
             o,
             a,
             `bandpass`,
-            2600 * s,
-            2.5,
-            0.035,
+            2200 * s,
+            1.7,
+            0.022,
             0.9 * i + 0.1,
           ),
-            this.tone(o, a, `sine`, 1520 * s, 1440 * s, 0.07, 0.35 * i + 0.05),
-            this.tone(o, a, `sine`, 2380 * s, 2300 * s, 0.045, 0.2 * i));
+            this.tone(o, a, `sine`, 380 * s, 240 * s, 0.055, 0.4 * i + 0.05),
+            this.tone(o, a, `sine`, 1700 * s, 1200 * s, 0.028, 0.2 * i));
           break;
         case `wall`:
-          (this.noiseBurst(o, a, `bandpass`, 950 * s, 1.4, 0.06, 0.8 * i + 0.1),
-            this.tone(o, a, `sine`, 420 * s, 360 * s, 0.1, 0.5 * i + 0.05));
+          (this.noiseBurst(o, a, `bandpass`, 950 * s, 1.4, 0.045, 0.8 * i + 0.1),
+            this.tone(o, a, `sine`, 300 * s, 180 * s, 0.065, 0.5 * i + 0.05));
           break;
         case `divider`:
           (this.noiseBurst(
@@ -4878,14 +4906,14 @@ var ir = class {
             `bandpass`,
             1250 * s,
             1.6,
-            0.05,
+            0.035,
             0.8 * i + 0.1,
           ),
-            this.tone(o, a, `sine`, 640 * s, 560 * s, 0.09, 0.45 * i + 0.05));
+            this.tone(o, a, `sine`, 560 * s, 360 * s, 0.06, 0.45 * i + 0.05));
           break;
         case `band`:
           (this.noiseBurst(o, a, `lowpass`, 700, 0.8, 0.07, 0.6 * i + 0.1),
-            this.tone(o, a, `sine`, 160, 95, 0.14, 0.55 * i + 0.05));
+            this.tone(o, a, `sine`, 160, 95, 0.11, 0.55 * i + 0.05));
       }
     }
     launch(e, t = 0) {
@@ -4894,8 +4922,8 @@ var ir = class {
       let r = n.currentTime + 0.004,
         i = this.out(0.5 + 0.5 * e, t);
       (this.noiseBurst(i, r, `highpass`, 1800, 0.7, 0.03, 0.6 + 0.3 * e),
-        this.tone(i, r, `triangle`, 190 + e * 90, 70, 0.22 + e * 0.08, 0.5),
-        this.tone(i, r + 0.01, `sine`, 95 + e * 30, 55, 0.3, 0.35));
+        this.tone(i, r, `triangle`, 210 + e * 100, 90, 0.1 + e * 0.05, 0.5),
+        this.tone(i, r + 0.005, `sine`, 120 + e * 40, 65, 0.12, 0.35));
     }
     stretch(e) {
       let t = this.ready();
@@ -6320,25 +6348,26 @@ var Hr = class {
     }
     impact(e, t, n, r) {
       if (this.effectsOn) {
-        if (e === `puck` && r > 9) {
+        if (e === `puck` && r > 6) {
           let e = Math.min(14, Math.round(r / 2.5));
+          if (r > 13) this.rings.spawn(t, n, 16773572, 1.2 + Math.min(1, r / MAX_SHOT_SPEED) * 0.7, 0.16);
           this.sparks.emit(t, n, X * 0.5, e, {
             color: 16769184,
             speed: 2 + r * 0.12,
-            up: 2.5,
-            life: 0.35,
-            size: 0.2,
+            up: 1.4,
+            life: 0.18,
+            size: 0.18,
             gravity: 10,
           });
-        } else if ((e === `wall` || e === `divider`) && r > 12) {
+        } else if ((e === `wall` || e === `divider`) && r > 9) {
           let e = Math.min(10, Math.round(r / 3));
           this.sparks.emit(t, n, 0.25, e, {
             color: 14268554,
             speed: 1.6,
-            up: 1.8,
-            life: 0.55,
-            size: 0.24,
-            gravity: 4,
+            up: 1.2,
+            life: 0.22,
+            size: 0.2,
+            gravity: 8,
             spread: 0.5,
           });
         }
@@ -6464,7 +6493,7 @@ var Hr = class {
           let c = n.find((e) => e.id === t);
           if (!c || c.lift > 0.05 || a * (c.y - i) < Ur) continue;
           let l = Math.hypot(c.x - o.x, c.y - o.y) / Math.max(e, 1 / 240);
-          this.bands[r].pluck(o.x, Math.min(1, l / 37));
+          this.bands[r].pluck(o.x, Math.min(1, l / MAX_SHOT_SPEED));
         }
         const version = this.bands[r].geo.attributes.position.version;
         ((this.pressPrev[r] = s), this.bands[r].update(e, o));

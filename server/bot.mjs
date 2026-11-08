@@ -46,15 +46,17 @@ class BotRunner {
         this.rest(0.4 + Math.random() * 0.6);
       }
     });
-    // fx/score 由服务器广播，机器人不需要渲染它们。
+    // 机器人无需声画反馈，退出特效订阅，旧服兼容处理器仍保留。
     room.onMessage('fx', () => {});
     room.onMessage('score', () => {});
+    room.send('local_fx', true);
     room.onDrop(() => {
       this.paused = true;
       this.rest(0.8);
     });
     room.onReconnect(() => {
       if (this.stopped) return;
+      room.send('local_fx', true);
       this.paused = false;
       this.prev.clear();
       this.speeds.clear();

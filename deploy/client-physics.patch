@@ -4,11 +4,11 @@
  // 网络层通过 Colyseus SDK 对接权威服务器
  // 重建：python3 deploy/build-game.py
  import * as T3 from '../vendor/three-orig.js';
-+import { LocalPrediction } from './prediction.mjs?v=2';
++import { LocalPrediction } from './prediction.mjs?v=3';
  import { n as e, t } from '../vendor/colyseus-orig.js';
  import * as n from '@dimforge/rapier2d-compat';
  await n.init();
-@@ -2764,6 +2765,13 @@
+@@ -2766,6 +2767,13 @@
      kind = `online`;
      input;
      snaps = [];
@@ -22,12 +22,21 @@
      offset = null;
      pending = [null, null];
      pendingGuide = [null, null];
-@@ -2811,16 +2819,20 @@
+@@ -2773,6 +2781,8 @@
+     released = null;
+     remote = null;
+     fx = [];
++    predictedFx = [];
++    localFx = null;
+     timeAnchor = { v: 0, at: 0 };
+     phase = ``;
+     overAt = 0;
+@@ -2813,16 +2823,25 @@
                : t.reject(Error(e.error || `昵称暂时没能保存，请重试。`)));
          }),
          n.onMessage(`fx`, (e) => {
--          let t = performance.now() + Xn;
-+          let t = performance.now() + (this.prediction.enabled ? 0 : Xn);
++          if (this.prediction.enabled || this.dropped || this.st?.phase !== `playing`) return;
+           let t = performance.now() + Xn;
            for (let n of e) this.fx.push({ at: t, f: n });
          }),
          n.onMessage(`score`, () => {}),
@@ -35,6 +44,8 @@
          n.onDrop(() => {
 -          ((this.dropped = !0), this.input.abort());
 +          ((this.dropped = !0), this.input.abort(), this.prediction.clear());
++          this.fx.length = this.predictedFx.length = 0;
++          this.localFx = null;
          }),
          n.onReconnect(() => {
            this.dropped = !1;
@@ -42,10 +53,12 @@
 +          this.offset = null;
 +          this.predictionClock = null;
 +          this.prediction.clear();
++          this.fx.length = this.predictedFx.length = 0;
++          this.localFx = null;
          }),
          n.onLeave((n) => {
            this.leaving ||
-@@ -2841,24 +2853,35 @@
+@@ -2843,24 +2862,35 @@
          canvas: t.canvas,
          side: () => this.mySide ?? 0,
          enabled: () => this.canPlay(),
@@ -86,7 +99,7 @@
          },
          onDenied: (e, t) => {
            (i.shake(e.id), a.deny(), a.buzz([10, 40, 10]));
-@@ -2884,6 +2907,12 @@
+@@ -2886,6 +2916,12 @@
          }),
          typeof n.state?.serverTime == `number` && this.onState(n.state));
      }
@@ -99,7 +112,7 @@
      get st() {
        return this.room.state;
      }
-@@ -2919,6 +2948,8 @@
+@@ -2921,6 +2957,8 @@
        );
      }
      speedOf(e) {
@@ -108,7 +121,31 @@
        let t = this.snaps;
        if (t.length < 2) return 0;
        let n = t[t.length - 2],
-@@ -2958,6 +2989,9 @@
+@@ -2945,10 +2983,21 @@
+               : null
+             : `not_your_half`;
+     }
++    setLocalFx(enabled) {
++      if (this.localFx === enabled) return;
++      this.fx.length = this.predictedFx.length = 0;
++      this.localFx = enabled;
++      this.room.send(`local_fx`, enabled);
++    }
+     onState(e) {
+       let t = performance.now(),
+-        n = e?.serverTime;
+-      if (typeof n != `number` || !Number.isFinite(n)) return;
++        serverTime = e?.serverTime,
++        n = serverTime - (Number.isFinite(e?.physicsDelay) ? e.physicsDelay : 0);
++      if (!Number.isFinite(serverTime) || !Number.isFinite(n)) {
++        this.prediction.clear();
++        this.setLocalFx(false);
++        return;
++      }
+       let r = [],
+         i = !0;
+       if (
+@@ -2960,13 +3009,19 @@
                y: e.y,
                a: Number.isFinite(e.a) ? e.a : 0,
                color: e.c,
@@ -118,7 +155,19 @@
                held: e.held === 0 || e.held === 1 ? e.held : void 0,
              }));
          }),
-@@ -2976,10 +3010,28 @@
+         !i || r.length === 0)
+-      )
++      ) {
++        this.prediction.clear();
++        this.setLocalFx(false);
+         return;
+-      let a = n - t,
++      }
++      let a = serverTime - t,
+         o = this.offset;
+       this.offset =
+         o === null || !Number.isFinite(o) || a > o ? a : o + (a - o) * 0.02;
+@@ -2978,10 +3033,29 @@
            : (this.snaps = [{ t: n, pucks: r }]),
          this.snaps.length > 120 &&
            this.snaps.splice(0, this.snaps.length - 120));
@@ -127,6 +176,7 @@
 +      this.inputSeq = Math.max(this.inputSeq, me?.inputSeq || 0);
 +      this.prediction.receive(r, n, e.phase, { inputSeq: me?.inputSeq, shots });
 +      this.predictionClock = { time: n, at: t };
++      this.setLocalFx(this.prediction.enabled);
        let c = e.timeLeft / 10;
        c !== this.timeAnchor.v && (this.timeAnchor = { v: c, at: t });
      }
@@ -147,7 +197,7 @@
        ((this.pending[e.side] = e),
          e.side === this.mySide &&
            this.streak.shot(e.puckId, performance.now() / 1e3));
-@@ -3000,14 +3052,16 @@
+@@ -3002,14 +3076,16 @@
        let { ui: t, sfx: n, scene: r } = this.ctx;
        switch (e.type) {
          case `reject`:
@@ -166,18 +216,20 @@
                ((this.released = null),
                t.toast(
                  e.reason === `cooldown`
-@@ -3111,8 +3165,8 @@
+@@ -3113,8 +3189,10 @@
        )
          return { pucks: this.render };
        this.handlePhase(n, t);
 -      let r = t + this.offset - Xn,
 -        i = this.sample(r);
++      this.predictedFx.length = 0;
 +      let r = this.prediction.enabled ? this.predictionTime(t) : t + this.offset - Xn,
-+        i = this.prediction.sample(r) ?? this.sample(r);
++        i = this.prediction.sample(r, this.predictedFx) ?? this.sample(r);
++      for (const impact of this.predictedFx) Bn(this.ctx, impact);
        this.render = i;
        for (let e of [0, 1]) {
          let t = this.pending[e];
-@@ -3170,7 +3224,7 @@
+@@ -3172,7 +3250,7 @@
                : null,
            };
          },
@@ -186,7 +238,7 @@
          l = s(o) ?? (this.remote ? gn(this.remote, !1) : null),
          u = Ln(Rn([c, this.input.view(), l]), this.overtime),
          d = null;
-@@ -3188,7 +3242,8 @@
+@@ -3190,7 +3268,8 @@
        if (r === null) return;
        let i = j(r),
          a = t.aims?.[i];
@@ -196,15 +248,24 @@
          this.remote = null;
          return;
        }
-@@ -3499,6 +3554,7 @@
+@@ -3228,6 +3307,7 @@
+         a !== this.phase)
+       ) {
+         let s = this.phase;
++        this.fx.length = this.predictedFx.length = 0;
+         if (((this.phase = a), a === `waiting`)) {
+           if ((n.setHud(!1), this.mode === `friend`)) {
+             let e = new URL(location.href);
+@@ -3501,6 +3581,8 @@
          null)),
          (this.leaving = !0),
          window.clearInterval(this.pingTimer),
 +        this.prediction.clear(),
++        (this.fx.length = this.predictedFx.length = 0),
          this.guide.hide(),
          this.input.dispose(),
          this.ctx.ui.notice(null),
-@@ -3510,9 +3566,12 @@
+@@ -3512,9 +3594,12 @@
        return {
          offset: this.offset,
          snaps: e.length,
@@ -218,7 +279,106 @@
          render0: this.render[0] ?? null,
        };
      }
-@@ -6469,8 +6528,12 @@
+@@ -4802,17 +4887,17 @@
+             o,
+             a,
+             `bandpass`,
+-            2600 * s,
+-            2.5,
+-            0.035,
++            2200 * s,
++            1.7,
++            0.022,
+             0.9 * i + 0.1,
+           ),
+-            this.tone(o, a, `sine`, 1520 * s, 1440 * s, 0.07, 0.35 * i + 0.05),
+-            this.tone(o, a, `sine`, 2380 * s, 2300 * s, 0.045, 0.2 * i));
++            this.tone(o, a, `sine`, 380 * s, 240 * s, 0.055, 0.4 * i + 0.05),
++            this.tone(o, a, `sine`, 1700 * s, 1200 * s, 0.028, 0.2 * i));
+           break;
+         case `wall`:
+-          (this.noiseBurst(o, a, `bandpass`, 950 * s, 1.4, 0.06, 0.8 * i + 0.1),
+-            this.tone(o, a, `sine`, 420 * s, 360 * s, 0.1, 0.5 * i + 0.05));
++          (this.noiseBurst(o, a, `bandpass`, 950 * s, 1.4, 0.045, 0.8 * i + 0.1),
++            this.tone(o, a, `sine`, 300 * s, 180 * s, 0.065, 0.5 * i + 0.05));
+           break;
+         case `divider`:
+           (this.noiseBurst(
+@@ -4821,14 +4906,14 @@
+             `bandpass`,
+             1250 * s,
+             1.6,
+-            0.05,
++            0.035,
+             0.8 * i + 0.1,
+           ),
+-            this.tone(o, a, `sine`, 640 * s, 560 * s, 0.09, 0.45 * i + 0.05));
++            this.tone(o, a, `sine`, 560 * s, 360 * s, 0.06, 0.45 * i + 0.05));
+           break;
+         case `band`:
+           (this.noiseBurst(o, a, `lowpass`, 700, 0.8, 0.07, 0.6 * i + 0.1),
+-            this.tone(o, a, `sine`, 160, 95, 0.14, 0.55 * i + 0.05));
++            this.tone(o, a, `sine`, 160, 95, 0.11, 0.55 * i + 0.05));
+       }
+     }
+     launch(e, t = 0) {
+@@ -4837,8 +4922,8 @@
+       let r = n.currentTime + 0.004,
+         i = this.out(0.5 + 0.5 * e, t);
+       (this.noiseBurst(i, r, `highpass`, 1800, 0.7, 0.03, 0.6 + 0.3 * e),
+-        this.tone(i, r, `triangle`, 190 + e * 90, 70, 0.22 + e * 0.08, 0.5),
+-        this.tone(i, r + 0.01, `sine`, 95 + e * 30, 55, 0.3, 0.35));
++        this.tone(i, r, `triangle`, 210 + e * 100, 90, 0.1 + e * 0.05, 0.5),
++        this.tone(i, r + 0.005, `sine`, 120 + e * 40, 65, 0.12, 0.35));
+     }
+     stretch(e) {
+       let t = this.ready();
+@@ -6263,25 +6348,26 @@
+     }
+     impact(e, t, n, r) {
+       if (this.effectsOn) {
+-        if (e === `puck` && r > 9) {
++        if (e === `puck` && r > 6) {
+           let e = Math.min(14, Math.round(r / 2.5));
++          if (r > 13) this.rings.spawn(t, n, 16773572, 1.2 + Math.min(1, r / MAX_SHOT_SPEED) * 0.7, 0.16);
+           this.sparks.emit(t, n, X * 0.5, e, {
+             color: 16769184,
+             speed: 2 + r * 0.12,
+-            up: 2.5,
+-            life: 0.35,
+-            size: 0.2,
++            up: 1.4,
++            life: 0.18,
++            size: 0.18,
+             gravity: 10,
+           });
+-        } else if ((e === `wall` || e === `divider`) && r > 12) {
++        } else if ((e === `wall` || e === `divider`) && r > 9) {
+           let e = Math.min(10, Math.round(r / 3));
+           this.sparks.emit(t, n, 0.25, e, {
+             color: 14268554,
+             speed: 1.6,
+-            up: 1.8,
+-            life: 0.55,
+-            size: 0.24,
+-            gravity: 4,
++            up: 1.2,
++            life: 0.22,
++            size: 0.2,
++            gravity: 8,
+             spread: 0.5,
+           });
+         }
+@@ -6407,7 +6493,7 @@
+           let c = n.find((e) => e.id === t);
+           if (!c || c.lift > 0.05 || a * (c.y - i) < Ur) continue;
+           let l = Math.hypot(c.x - o.x, c.y - o.y) / Math.max(e, 1 / 240);
+-          this.bands[r].pluck(o.x, Math.min(1, l / 37));
++          this.bands[r].pluck(o.x, Math.min(1, l / MAX_SHOT_SPEED));
+         }
+         const version = this.bands[r].geo.attributes.position.version;
+         ((this.pressPrev[r] = s), this.bands[r].update(e, o));
+@@ -6471,8 +6557,12 @@
    let s = performance.now(),
      c = (e) => {
        let t = Math.min(0.1, Math.max(0, (e - s) / 1e3));
