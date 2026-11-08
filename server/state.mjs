@@ -11,14 +11,30 @@ export class PuckState extends Schema {
     this.a = 0;
     this.c = 0;
     this.held = -1; // -1 未被持有，0/1 为持有方
+    this.vx = 0;
+    this.vy = 0;
+    this.av = 0;
+    this.launchStep = -1;
+    this.launchCx = 0;
+    this.launchPx = 0;
+    this.launchPy = 0;
+    this.launchSide = -1;
   }
 }
 type('uint8')(PuckState.prototype, 'id');
-type('number')(PuckState.prototype, 'x');
-type('number')(PuckState.prototype, 'y');
-type('number')(PuckState.prototype, 'a');
+type('float32')(PuckState.prototype, 'x');
+type('float32')(PuckState.prototype, 'y');
+type('float32')(PuckState.prototype, 'a');
 type('uint8')(PuckState.prototype, 'c');
 type('int8')(PuckState.prototype, 'held');
+type('float32')(PuckState.prototype, 'vx');
+type('float32')(PuckState.prototype, 'vy');
+type('float32')(PuckState.prototype, 'av');
+type('int16')(PuckState.prototype, 'launchStep');
+type('float32')(PuckState.prototype, 'launchCx');
+type('float32')(PuckState.prototype, 'launchPx');
+type('float32')(PuckState.prototype, 'launchPy');
+type('int8')(PuckState.prototype, 'launchSide');
 
 export class AimState extends Schema {
   constructor() {
@@ -49,6 +65,7 @@ export class PlayerState extends Schema {
     this.passes = 0;
     this.connected = true;
     this.reconnectLeft = 0;
+    this.inputSeq = 0;
   }
 }
 type('string')(PlayerState.prototype, 'name');
@@ -59,11 +76,13 @@ type('uint16')(PlayerState.prototype, 'shots');
 type('uint16')(PlayerState.prototype, 'passes');
 type('boolean')(PlayerState.prototype, 'connected');
 type('number')(PlayerState.prototype, 'reconnectLeft');
+type('uint32')(PlayerState.prototype, 'inputSeq');
 
 export class GameState extends Schema {
   constructor() {
     super();
     this.serverTime = 0;
+    this.physicsDelay = 0; // 最后物理子步距发送时间的毫秒数，避免重复传完整 epoch 时间戳。
     this.phase = 'waiting'; // waiting | starting | playing | over
     this.timeLeft = 0; // ×10
     this.matchTime = 0; // ×10
@@ -78,6 +97,7 @@ export class GameState extends Schema {
   }
 }
 type('number')(GameState.prototype, 'serverTime');
+type('number')(GameState.prototype, 'physicsDelay');
 type('string')(GameState.prototype, 'phase');
 type('number')(GameState.prototype, 'timeLeft');
 type('number')(GameState.prototype, 'matchTime');

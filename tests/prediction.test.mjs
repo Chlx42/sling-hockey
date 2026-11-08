@@ -1,0 +1,134 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { xt, Be, ut, k } from '../engine/index.mjs';
+import { LocalPrediction, MAX_PREDICTION_MS } from '../client/js/prediction.mjs';
+
+const create = () => new LocalPrediction((pucks) => new xt(pucks));
+
+test('松手当帧即显示发射位置，ACK晚于最新快照也不重放', () => {
+  const source = new xt(Be()), prediction = create();
+  try {
+    const pucks = source.snapshot();
+    pucks[2].held = 0;
+    prediction.receive(pucks, 1000);
+    prediction.sample(1000);
+    const shot = { ...ut(0, 2, 0, 0, 3.5), side: 0 };
+    prediction.shoot(shot, 1010);
+    const first = prediction.sample(1010)[2];
+    assert.equal(first.held, undefined);
+    assert.ok(Math.abs(first.y - shot.py) < 0.01);
+    prediction.sample(1093);
+    const before = prediction.world.snapshot()[2];
+    prediction.shoot(shot, 1110, true);
+    prediction.sample(1110);
+    const after = prediction.world.snapshot()[2];
+    assert.ok(after.launchStep > before.launchStep);
+    assert.ok(after.y > before.y && after.y < -10, '确认不跳回抓取点或松手点');
+    prediction.receive(pucks, 1100);
+    assert.equal(prediction.commands.size, 1, '确认之前的快照不能抹掉已确认出手');
+  } finally { source.free(); prediction.clear(); }
+});
+
+test('本地抓取立即移除旧位置碰撞体，拒绝后恢复权威状态', () => {
+  const source = new xt([{ id: 0, x: 0, y: -5, a: 0, color: 0 },
+    { id: 1, x: -3, y: -5, a: 0, color: 1 }]);
+  const prediction = create();
+  try {
+    source.find(1).body.setLinvel({ x: 25, y: 0 }, true);
+    prediction.receive(source.snapshot(), 1000);
+    prediction.sample(1000);
+    prediction.hold(0, 0);
+    prediction.sample(1150);
+    assert.equal(prediction.world.find(0).body.isEnabled(), false);
+    assert.ok(prediction.world.find(1).body.translation().x > 0, '应通过被拿走球的原位置');
+    prediction.reject();
+    prediction.sample(1150);
+    assert.equal(prediction.world.find(0).body.isEnabled(), true);
+    assert.ok(prediction.world.speedOf(0) > 0, '恢复后仍由真实碰撞传递动量');
+  } finally { source.free(); prediction.clear(); }
+});
+
+test('浏览器在两个快照间执行真实碰撞，断流后停止外推', () => {
+  const source = new xt([{ id: 0, x: 8, y: -5, a: 0, color: 0 }]);
+  const prediction = create();
+  try {
+    source.find(0).body.setLinvel({ x: 30, y: 0 }, true);
+    prediction.receive(source.snapshot(), 1000);
+    prediction.sample(1200);
+    assert.ok(prediction.world.find(0).body.linvel().x < 0, '本地物理应撞墙反弹');
+    assert.ok(prediction.render[0].x <= 8.51, '外推不能线性穿墙');
+    const frozen = structuredClone(prediction.sample(5000));
+    const steps = prediction.steps;
+    assert.deepEqual(prediction.sample(10000), frozen);
+    assert.equal(prediction.steps, steps);
+    assert.ok(steps <= MAX_PREDICTION_MS / (k * 1000) + 1);
+  } finally { source.free(); prediction.clear(); }
+});
+
+test('快照可恢复正在加速的弹射，预测轨迹与同源权威物理一致', () => {
+  const source = new xt(Be());
+  const prediction = create();
+  try {
+    const shot = ut(0, 2, 0, 0.12, 3.5);
+    source.launch(2, shot.cx, shot.px, shot.py, 0);
+    for (let i = 0; i < 4; i++) source.step();
+    prediction.receive(source.snapshot(), 1000);
+    prediction.sample(1100);
+    for (let i = 0; i < 12; i++) source.step();
+    const expected = source.snapshot(), actual = prediction.world.snapshot();
+    for (let i = 0; i < expected.length; i++) {
+      assert.ok(Math.hypot(actual[i].x - expected[i].x, actual[i].y - expected[i].y) < 0.015);
+    }
+  } finally { source.free(); prediction.clear(); }
+});
+
+test('出手不等网络确认，被拒后回到权威状态，晚到确认不会重放', () => {
+  const source = new xt(Be());
+  const prediction = create();
+  try {
+    const pucks = source.snapshot();
+    pucks[2].held = 0;
+    prediction.receive(pucks, 1000);
+    prediction.sample(1000);
+    const shot = { ...ut(0, 2, 0, 0, 3.5), side: 0 };
+    assert.equal(prediction.shoot(shot, 1000), true);
+    prediction.sample(1050);
+    const body = prediction.world.find(2).body;
+    assert.ok(body.isEnabled());
+    assert.ok(body.linvel().y > 0);
+    assert.ok(prediction.render[2].y < -10, '应在拖拽松手处立即发射');
+    prediction.reject();
+    prediction.sample(1060);
+    assert.equal(body.isEnabled(), false);
+    assert.equal(prediction.render[2].held, 0);
+    prediction.receive(source.snapshot(), 1200);
+    prediction.shoot(shot, 1100, true);
+    assert.equal(prediction.commands.size, 0);
+    prediction.sample(1200);
+    assert.equal(prediction.world.isLaunching(2), false);
+  } finally { source.free(); prediction.clear(); }
+});
+
+test('10Hz校正持续收敛，结束及重连释放预测状态，旧协议可退回插值', () => {
+  const source = new xt(Be());
+  const prediction = create();
+  try {
+    const shot = ut(0, 2, 0, -0.12, 3.5);
+    source.launch(2, shot.cx, shot.px, shot.py, 0);
+    for (let frame = 0; frame < 120; frame++) {
+      const at = 1000 + frame * 1000 / 60;
+      if (frame % 6 === 0) prediction.receive(source.snapshot(), at);
+      prediction.sample(at);
+      for (const p of prediction.render) assert.ok(Number.isFinite(p.x) && Number.isFinite(p.y));
+      source.step(); source.step();
+    }
+    prediction.receive(source.snapshot(), 3000, 'over');
+    const over = structuredClone(prediction.sample(3000));
+    assert.deepEqual(prediction.sample(5000), over);
+    prediction.clear();
+    assert.equal(prediction.world, null);
+    assert.equal(prediction.sample(5100), null);
+    prediction.receive(Be(), 6000);
+    assert.equal(prediction.enabled, false);
+  } finally { source.free(); prediction.clear(); }
+});

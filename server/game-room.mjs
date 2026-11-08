@@ -9,8 +9,13 @@ const START_COUNTDOWN = 3;
 const RECONNECT_GRACE = 30;
 const SEAT_FAIL_GRACE = 15;
 const FX_TYPES = ['puck', 'wall', 'divider', 'band', 'launch'];
+export const SNAPSHOT_INTERVAL_MS = 100;
+export const SIMULATION_INTERVAL_MS = 1000 / 30;
+const IDLE_INTERVAL_MS = 250;
+const MAX_FX_PER_PATCH = 32;
 
 const fin = (v, lo, hi) => (Number.isFinite(v) ? Math.min(hi, Math.max(lo, v)) : lo);
+const quantize = (v) => Math.round(v * 1000) / 1000;
 
 export class GameRoom extends Room {
   maxClients = 2;
@@ -30,8 +35,8 @@ export class GameRoom extends Room {
     this.state.otTime = Math.round(this.engine.overtimeTime * 10);
     this.state.winner = -1;
     this.onBeforePatch();
-    this.setPatchRate(50); // 20Hz
-    this.setSimulationInterval((dt) => this.tick(dt));
+    this.setPatchRate(SNAPSHOT_INTERVAL_MS); // 客户端以本地物理补齐两次权威快照之间的运动。
+    this.setSimulationInterval((dt) => this.tick(dt), IDLE_INTERVAL_MS);
 
     // 队列房预订的席位超时未消费 → 通知已入场者重新匹配
     if (this.mode === 'queue') {
@@ -46,8 +51,9 @@ export class GameRoom extends Room {
     this.onMessage('grab', (client, m) => {
       const p = this.meta.players.get(client.sessionId);
       if (!this.playing(p)) return;
+      this.recordInput(p, m);
       const r = this.engine.grab(p.side, m.puckId | 0);
-      if (!r.ok) return this.reject(client, 'grab', r.reason);
+      if (!r.ok) return this.reject(client, 'grab', r.reason, m.seq);
       const hold = this.engine.holds[p.side];
       Object.assign(this.state.aims[p.side], { active: true, puckId: hold.puckId, pull: false, x: hold.x, y: hold.y, cx: hold.x });
     });
@@ -63,11 +69,12 @@ export class GameRoom extends Room {
       const p = this.meta.players.get(client.sessionId);
       if (!this.playing(p)) return;
       if (!ze(m.cx) || !ze(m.px) || !ze(m.py)) return;
+      this.recordInput(p, m);
       const r = this.engine.shoot(p.side, { puckId: m.puckId | 0, cx: fin(+m.cx, -8, 8), px: fin(+m.px, -9, 9), py: fin(+m.py, -16, 16) });
       if (!r.ok) {
         this.engine.drop(p.side);
         this.clearAim(p.side);
-        return this.reject(client, 'shoot', r.reason);
+        return this.reject(client, 'shoot', r.reason, m.seq);
       }
       this.clearAim(p.side);
       // 在下一次物理推进之前发送发射锚点，保持客户端插值时间一致。
@@ -76,9 +83,10 @@ export class GameRoom extends Room {
     this.onMessage('drop', (client, m) => {
       const p = this.meta.players.get(client.sessionId);
       if (!this.playing(p)) return;
+      this.recordInput(p, m);
       const r = this.engine.drop(p.side, fin(+m.x, -9, 9), fin(+m.y, -16, 16));
       this.clearAim(p.side);
-      if (!r.ok) this.reject(client, 'drop', r.reason);
+      if (!r.ok) this.reject(client, 'drop', r.reason, m.seq);
     });
     this.onMessage('rematch', (client) => {
       if (this.phase !== 'over') return;
@@ -102,8 +110,14 @@ export class GameRoom extends Room {
     return this.phase === 'playing' && !!p?.alive;
   }
 
-  reject(client, action, reason) {
-    client.send('evt', { type: 'reject', action, reason });
+  recordInput(player, message) {
+    if (Number.isInteger(message.seq) && message.seq > 0 && message.seq <= 0xffffffff) {
+      player.inputSeq = Math.max(player.inputSeq || 0, message.seq);
+    }
+  }
+
+  reject(client, action, reason, seq) {
+    client.send('evt', { type: 'reject', action, reason, seq });
     if (process.env.SLING_BOT_DEBUG) console.log(`[game] reject sid=${client.sessionId} action=${action} reason=${reason}`);
   }
 
@@ -165,8 +179,10 @@ export class GameRoom extends Room {
   startStarting() {
     this.lock();
     this.phase = 'starting';
+    this.setSimulationInterval((dt) => this.tick(dt), SIMULATION_INTERVAL_MS);
     this.countdown = START_COUNTDOWN;
     this.engine.reset(Be());
+    this.lastPhysicsAt = Date.now();
     this.engine.drainEvents();
     this.fxQueue.length = 0;
     for (const p of this.meta.players.values()) {
@@ -183,6 +199,7 @@ export class GameRoom extends Room {
   finish() {
     if (this.phase === 'over') return;
     this.phase = 'over';
+    this.setSimulationInterval((dt) => this.tick(dt), IDLE_INTERVAL_MS);
     const winner = this.engine.winner;
     this.state.phase = 'over';
     this.state.winner = winner;
@@ -196,7 +213,7 @@ export class GameRoom extends Room {
   }
 
   tick(dt) {
-    dt = Math.min(dt / 1000, 0.05); // Colyseus 回调是毫秒，引擎接收秒。
+    dt = Math.min(dt / 1000, 0.1); // 30Hz 调度，仍按引擎固定 120Hz 子步推进；最多补算 100ms。
     // 重连倒计时
     for (const p of this.meta.players.values()) {
       if (!p.alive && p.leftAt !== null && (this.phase === 'starting' || this.phase === 'playing')) {
@@ -210,6 +227,8 @@ export class GameRoom extends Room {
         this.phase = 'playing';
         this.state.phase = 'playing';
         this.state.countdown = 0;
+        this.lastPhysicsAt = Date.now();
+        this.physicsEpoch = this.lastPhysicsAt - this.engine.time * 1000;
       } else {
         const cd = Math.max(0, Math.ceil(this.countdown));
         if (this.state.countdown !== cd) this.state.countdown = cd;
@@ -217,7 +236,10 @@ export class GameRoom extends Room {
       return;
     }
     if (this.phase !== 'playing') return;
-    this.engine.update(dt, 24);
+    this.physicsEpoch ??= Date.now() - this.engine.time * 1000;
+    this.engine.update(dt, 12);
+    // engine.time 只包含完成的固定子步，不含 acc 和卡顿时丢弃的积压时间。
+    this.lastPhysicsAt = this.physicsEpoch + this.engine.time * 1000;
     this.flushEvents();
   }
 
@@ -225,10 +247,14 @@ export class GameRoom extends Room {
     for (const ev of this.engine.drainEvents()) {
       switch (ev.type) {
         case 'sfx':
-          this.fxQueue.push([FX_TYPES.indexOf(ev.e.k), ev.e.x, ev.e.y, ev.e.v, ev.e.s ?? -1]);
+          if (this.fxQueue.length < MAX_FX_PER_PATCH) {
+            this.fxQueue.push([FX_TYPES.indexOf(ev.e.k), quantize(ev.e.x), quantize(ev.e.y), quantize(ev.e.v), ev.e.s ?? -1]);
+          }
           break;
         case 'shot':
-          this.broadcast('shot', { ...ev.shot, t: Date.now() });
+          this.broadcast('shot', { ...ev.shot, t: this.lastPhysicsAt,
+            shotNumber: this.engine.shots[ev.shot.side],
+            seq: [...this.meta.players.values()].find((p) => p.side === ev.shot.side)?.inputSeq });
           break;
         case 'score':
           this.broadcast('score', ev.e);
@@ -238,15 +264,20 @@ export class GameRoom extends Room {
           break;
       }
     }
+  }
+
+  onBeforePatch() {
+    // 碰撞反馈按快照批量发包，出手/得分仍立即广播。
     if (this.fxQueue.length) {
       this.broadcast('fx', this.fxQueue);
       this.fxQueue = [];
     }
-  }
-
-  onBeforePatch() {
-    // 以 20Hz 写入完整快照，时间戳和位置对应同一批状态。
+    // 等待和结算画面不制造纯时间戳补丁；倒计时/重连/玩家信息仍由 Schema 正常同步。
+    if (this.phase !== 'playing' && this.snapshotPhase === this.phase) return;
+    this.snapshotPhase = this.phase;
     this.state.serverTime = Date.now();
+    this.state.physicsDelay = this.phase === 'playing'
+      ? Math.max(0, this.state.serverTime - (this.lastPhysicsAt ?? this.state.serverTime)) : 0;
     this.state.timeLeft = Math.round(this.engine.timeLeft * 10);
     if (this.engine.overtime !== this.state.overtime) {
       this.state.overtime = this.engine.overtime;
@@ -255,7 +286,11 @@ export class GameRoom extends Room {
     for (const p of this.meta.players.values()) {
       p.state.shots = this.engine.shots[p.side];
       p.state.passes = this.engine.passes[p.side];
+      // 与棋盘在同一补丁中提交确认，不能提前标记尚未同步的输入。
+      p.state.inputSeq = p.inputSeq || 0;
     }
+    // 只在 10Hz 快照读取速度，避免每个物理子步重复跨 WASM 边界。
+    this.engine.syncPucks(true);
     this.syncPucks();
   }
 
@@ -271,11 +306,20 @@ export class GameRoom extends Room {
       let dst = this.state.pucks[i];
       if (!dst) dst = this.state.pucks[i] = new PuckState();
       dst.id = src.id;
-      dst.x = src.x;
-      dst.y = src.y;
-      dst.a = src.a;
+      dst.x = quantize(src.x);
+      dst.y = quantize(src.y);
+      dst.a = quantize(src.a);
       dst.c = src.color;
       dst.held = src.held === undefined ? -1 : src.held;
+      dst.vx = quantize(src.vx);
+      dst.vy = quantize(src.vy);
+      dst.av = quantize(src.av);
+      dst.launchStep = src.launchStep;
+      const launching = src.launchStep >= 0;
+      dst.launchCx = launching ? quantize(src.launchCx) : 0;
+      dst.launchPx = launching ? quantize(src.launchPx) : 0;
+      dst.launchPy = launching ? quantize(src.launchPy) : 0;
+      dst.launchSide = launching ? src.launchSide : -1;
     }
   }
 }

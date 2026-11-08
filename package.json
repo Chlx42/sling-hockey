@@ -5,7 +5,8 @@
   "description": "桌上弹射冰球 —— three.js + Rapier + Colyseus 0.18 权威服务器",
   "scripts": {
     "start": "node server/index.mjs",
-    "smoke": "node deploy/smoke.mjs"
+    "smoke": "node deploy/smoke.mjs",
+    "test": "node --test tests/*.test.mjs"
   },
   "dependencies": {
     "@colyseus/schema": "^5.0.8",

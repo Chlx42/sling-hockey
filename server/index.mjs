@@ -3,7 +3,7 @@
 // WS: {processId}/{roomId}（nginx 按 Upgrade 头转发）
 import { Server, matchMaker } from 'colyseus';
 import { WebSocketTransport } from '@colyseus/ws-transport';
-import { GameRoom } from './game-room.mjs';
+import { GameRoom, SNAPSHOT_INTERVAL_MS } from './game-room.mjs';
 import { QueueRoom } from './queue-room.mjs';
 import * as board from './leaderboard.mjs';
 
@@ -39,7 +39,7 @@ gameServer.define('game', GameRoom);
 gameServer.define('queue', QueueRoom);
 
 gameServer.listen(PORT, '127.0.0.1').then(() => {
-  console.log(`sling-hockey colyseus server on 127.0.0.1:${PORT} (patch 20Hz)`);
+  console.log(`sling-hockey colyseus server on 127.0.0.1:${PORT} (patch ${1000 / SNAPSHOT_INTERVAL_MS}Hz, physics 120Hz)`);
 });
 
 process.on('SIGTERM', () => {

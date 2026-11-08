@@ -68,7 +68,7 @@ class BotRunner {
       const dt = Math.min(0.1, Math.max(0, (now - this.lastTickAt) / 1000));
       this.lastTickAt = now;
       this.tick(dt);
-    }, 16);
+    }, 1000 / 30);
     this.onState(room.state);
   }
 
@@ -132,8 +132,9 @@ class BotRunner {
     const dt = (at - this.snapshotTime) / 1000;
     for (const puck of state.pucks) {
       const previous = this.prev.get(puck.id);
-      this.speeds.set(puck.id, previous && dt > 0
-        ? Math.hypot(puck.x - previous.x, puck.y - previous.y) / dt : 0);
+      this.speeds.set(puck.id, Number.isFinite(puck.vx) && Number.isFinite(puck.vy)
+        ? Math.hypot(puck.vx, puck.vy)
+        : previous && dt > 0 ? Math.hypot(puck.x - previous.x, puck.y - previous.y) / dt : 0);
       this.prev.set(puck.id, { x: puck.x, y: puck.y });
     }
     this.snapshotTime = at;

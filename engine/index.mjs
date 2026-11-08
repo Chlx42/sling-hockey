@@ -16,13 +16,14 @@ var T = 9.5,
   Oe = (68 * Math.PI) / 180,
   ke = 1.15,
   Ae = Math.PI,
-  je = 0.35,
-  Me = 1.2,
-  Ne = 0.82,
-  Pe = 0.66,
-  Fe = 0.6,
-  Ie = 0.06,
-  Le = 0.12,
+  // 滑动阻力与接触摩擦分开：冰面保留惯性，擦边碰撞能传递旋转。
+  je = 0.16,
+  Me = 0.45,
+  Ne = 0.88,
+  Pe = 0.78,
+  Fe = 0.72,
+  Ie = 0.14,
+  Le = 0.22,
   k = 1 / 120;
 function A(e) {
   return e === 0 ? 1 : -1;
@@ -352,7 +353,8 @@ var pt = 1,
       this.free();
       let t = new n.World({ x: 0, y: 0 });
       ((t.timestep = k),
-        (t.numSolverIterations = 8),
+        (t.numSolverIterations = 4),
+        (t.maxCcdSubsteps = 2),
         (this.world = t),
         (this.queue = new n.EventQueue(!0)),
         this.tags.clear(),
@@ -408,7 +410,7 @@ var pt = 1,
         ),
           r(
             n.ColliderDesc.ball(D).setTranslation(e * i, 0),
-            { kind: `divider`, nx: 0, ny: 1 },
+            { kind: `divider`, nx: 0, ny: 1, roundX: e * i },
             Fe,
           ));
     }
@@ -442,6 +444,7 @@ var pt = 1,
           band: [{ sigma: null }, { sigma: null }],
           launch: null,
           launching: !1,
+          quietSteps: 0,
         }
       );
     }
@@ -452,6 +455,7 @@ var pt = 1,
       let a = this.find(e);
       if (!a) return;
       (this.endLaunch(a),
+        (a.quietSteps = 0),
         a.body.setEnabled(!0),
         a.body.setTranslation({ x: n, y: r }, !0),
         a.body.setLinvel({ x: 0, y: 0 }, !0),
@@ -460,7 +464,7 @@ var pt = 1,
         (a.band[1].sigma = null));
       let o = tt(i, t, n, r);
       o &&
-        ((a.launch = { plan: o, step: 0, tx: n, ty: r }),
+        ((a.launch = { plan: o, step: 0, tx: n, ty: r, cx: t, side: i }),
         a.body.setLinearDamping(0));
     }
     endLaunch(e) {
@@ -473,6 +477,7 @@ var pt = 1,
       let t = this.find(e);
       t &&
         (this.endLaunch(t),
+        (t.quietSteps = 0),
         t.body.setLinvel({ x: 0, y: 0 }, !1),
         t.body.setAngvel(0, !1),
         t.body.setEnabled(!1),
@@ -483,6 +488,7 @@ var pt = 1,
       let r = this.find(e);
       r &&
         (this.endLaunch(r),
+        (r.quietSteps = 0),
         r.body.setEnabled(!0),
         r.body.setTranslation({ x: t, y: n }, !0),
         r.body.setLinvel({ x: 0, y: 0 }, !0),
@@ -490,9 +496,39 @@ var pt = 1,
         (r.band[0].sigma = null),
         (r.band[1].sigma = null));
     }
+    restore(pucks) {
+      // 网络校正复用已有 WASM 世界，避免每个快照重建碰撞体。
+      for (const puck of pucks) {
+        const entry = this.find(puck.id);
+        if (!entry) continue;
+        this.endLaunch(entry);
+        entry.launching = false;
+        entry.quietSteps = 0;
+        entry.band[0].sigma = entry.band[1].sigma = null;
+        const body = entry.body;
+        body.setEnabled(!(puck.held >= 0));
+        body.setTranslation({ x: puck.x, y: puck.y }, true);
+        body.setRotation(puck.a, true);
+        body.setLinvel({ x: puck.vx ?? 0, y: puck.vy ?? 0 }, true);
+        body.setAngvel(puck.av ?? 0, true);
+        if (puck.launchStep >= 0 && !(puck.held >= 0)) {
+          const plan = tt(puck.launchSide, puck.launchCx, puck.launchPx, puck.launchPy);
+          if (plan && puck.launchStep < plan.steps) {
+            entry.launch = { plan, step: puck.launchStep, tx: puck.x, ty: puck.y,
+              cx: puck.launchCx, side: puck.launchSide };
+            body.setLinearDamping(0);
+          }
+        }
+        if (!entry.launch && !puck.vx && !puck.vy && !puck.av && Math.abs(puck.y) < yt)
+          body.sleep();
+      }
+    }
     step(e) {
       let t = this.world;
-      if (!t || !this.queue) return;
+      if (!t || !this.queue) return false;
+      // 静止棋盘无需碰撞检测/求解；launch、place 和 restore 会重新唤醒。
+      if (!this.bodies.some(({ body, launch }) => launch || (body.isEnabled() && !body.isSleeping())))
+        return false;
       let n = this.bodies.length,
         r = this.scratch,
         i = this.acc;
@@ -519,7 +555,7 @@ var pt = 1,
           s = o.x,
           c = o.y,
           l = !1;
-        for (let t of [0, 1]) {
+        for (let t = 0; t < 2; t++) {
           let r = n.band[t].sigma !== null;
           if ($e(t, a.x, a.y, s, c, n.band[t], i)) {
             if (!r && e) {
@@ -556,8 +592,8 @@ var pt = 1,
             ),
             this.endLaunch(t));
       }
-      let a = 9 * k,
-        o = 5 * k;
+      let a = 4.5 * k,
+        o = 0.8 * k;
       for (let e = 0; e < n; e++) {
         let t = this.bodies[e],
           n = t.body;
@@ -577,7 +613,12 @@ var pt = 1,
           let e = Math.abs(c);
           n.setAngvel(e > o ? c - Math.sign(c) * o : 0, !1);
         }
+        // 连续静止后休眠；带上仍有弹性势能时不能提前停下。
+        if (s <= a && Math.abs(c) <= o && t.band[0].sigma === null && t.band[1].sigma === null) {
+          if (++t.quietSteps >= 12) n.sleep();
+        } else t.quietSteps = 0;
       }
+      return true;
     }
     onContact(e, t, n) {
       let r = this.tags.get(e),
@@ -587,10 +628,15 @@ var pt = 1,
       if (r.kind === `puck` && i.kind === `puck`) {
         let e = r.idx,
           t = i.idx,
-          o = Math.hypot(a[2 * e] - a[2 * t], a[2 * e + 1] - a[2 * t + 1]);
+          s = this.bodies[e].body.translation(),
+          c = this.bodies[t].body.translation(),
+          dx = c.x - s.x,
+          dy = c.y - s.y,
+          distance = Math.hypot(dx, dy),
+          o = distance > 1e-6
+            ? Math.abs(((a[2 * e] - a[2 * t]) * dx + (a[2 * e + 1] - a[2 * t + 1]) * dy) / distance)
+            : 0;
         if (o < 0.3) return;
-        let s = this.bodies[e].body.translation(),
-          c = this.bodies[t].body.translation();
         n.push({
           k: `puck`,
           x: (s.x + c.x) / 2,
@@ -605,9 +651,14 @@ var pt = 1,
         s = o === r ? i : r;
       if (!o || o.kind !== `puck` || s.kind === `puck`) return;
       let c = o.idx,
-        l = Math.abs(a[2 * c] * s.nx + a[2 * c + 1] * s.ny);
+        u = this.bodies[c].body.translation(),
+        nx = s.nx, ny = s.ny;
+      if (s.roundX !== undefined) {
+        const dx = u.x - s.roundX, length = Math.hypot(dx, u.y);
+        if (length > 1e-6) { nx = dx / length; ny = u.y / length; }
+      }
+      let l = Math.abs(a[2 * c] * nx + a[2 * c + 1] * ny);
       if (l < 0.3) return;
-      let u = this.bodies[c].body.translation();
       n.push({
         k: s.kind,
         x: u.x,
@@ -644,18 +695,11 @@ var pt = 1,
       }
     }
     snapshot() {
-      return this.bodies.map((e) => {
-        let t = e.body.translation();
-        return {
-          id: e.id,
-          x: t.x,
-          y: t.y,
-          a: e.body.rotation(),
-          color: e.color,
-        };
-      });
+      const snapshot = [];
+      this.readInto(snapshot);
+      return snapshot;
     }
-    readInto(e) {
+    readInto(e, includeMotion = true) {
       for (let t = 0; t < this.bodies.length; t++) {
         let n = this.bodies[t],
           r = n.body.translation(),
@@ -666,6 +710,17 @@ var pt = 1,
           (i.y = r.y),
           (i.a = n.body.rotation()),
           (i.color = n.color));
+        if (includeMotion) {
+          const velocity = n.body.linvel(), launch = n.launch;
+          i.vx = velocity.x;
+          i.vy = velocity.y;
+          i.av = n.body.angvel();
+          i.launchStep = launch?.step ?? -1;
+          i.launchCx = launch?.cx ?? 0;
+          i.launchPx = launch?.plan.px ?? 0;
+          i.launchPy = launch?.plan.py ?? 0;
+          i.launchSide = launch?.side ?? -1;
+        }
       }
       e.length = this.bodies.length;
     }
@@ -1020,7 +1075,8 @@ var Rt = class {
     ((this.matchTime = e.matchTime ?? 180),
       (this.overtimeTime = e.overtime ?? 60),
       (this.pucks = Be()),
-      (this.world = new xt(this.pucks)));
+      (this.world = new xt(this.pucks)),
+      this.syncPucks(true));
   }
   get score() {
     return this.scorer.score;
@@ -1046,6 +1102,7 @@ var Rt = class {
       (this.steps = 0),
       (this.events = []),
       this.scorer.reset(),
+      this.syncPucks(true),
       this.emit({ type: `start` }));
   }
   get timeLeft() {
@@ -1104,6 +1161,8 @@ var Rt = class {
       this.world.hold(t),
       this.scorer.grab(t),
       (r.held = e),
+      (r.vx = r.vy = r.av = 0),
+      (r.launchStep = -1),
       (this.holds[e] = { puckId: t, x: r.x, y: r.y }),
       this.emit({ type: `grab`, side: e, puckId: t }),
       { ok: !0 }
@@ -1128,6 +1187,8 @@ var Rt = class {
       (a.x = i.x),
       (a.y = i.y),
       (a.held = void 0),
+      (a.vx = a.vy = a.av = 0),
+      (a.launchStep = -1),
       (this.holds[e] = null),
       this.emit({ type: `drop`, side: e, puckId: a.id, x: i.x, y: i.y }),
       { ok: !0 }
@@ -1189,6 +1250,7 @@ var Rt = class {
       (this.holds[e] = null),
       (this.lastShot[e] = this.time),
       this.shots[e]++,
+      this.syncPucks(true),
       this.emit({ type: `shot`, shot: r }),
       this.emit({
         type: `sfx`,
@@ -1213,10 +1275,11 @@ var Rt = class {
   }
   stepOnce() {
     let e = this.sfxBuf;
-    ((e.length = 0), this.world.step(e));
+    e.length = 0;
+    const moved = this.world.step(e);
     for (let t of e) (this.emit({ type: `sfx`, e: t }), this.scorer.contact(t));
     ((this.time += k),
-      this.syncPucks(),
+      moved && this.syncPucks(),
       ++this.steps % 12 == 0 && this.scorer.tick(),
       this.flushScore(),
       this.checkWin());
@@ -1224,13 +1287,23 @@ var Rt = class {
   flushScore() {
     for (let e of this.scorer.drain()) this.emit({ type: `score`, e });
   }
-  syncPucks() {
-    this.world.readInto(this.tmp);
+  syncPucks(includeMotion = false) {
+    this.world.readInto(this.tmp, includeMotion);
     for (let e = 0; e < this.pucks.length; e++) {
       let t = this.pucks[e];
       if (t.held !== void 0) continue;
       let n = this.tmp[e];
       ((t.x = n.x), (t.y = n.y), (t.a = n.a));
+      if (includeMotion) {
+        t.vx = n.vx;
+        t.vy = n.vy;
+        t.av = n.av;
+        t.launchStep = n.launchStep;
+        t.launchCx = n.launchCx;
+        t.launchPx = n.launchPx;
+        t.launchPy = n.launchPy;
+        t.launchSide = n.launchSide;
+      }
       let r = N(t.y),
         i = this.prevSide[e];
       (i !== void 0 &&
@@ -1558,4 +1631,4 @@ var Hn = {
   not_your_half: `只能拿自己半场的冰球`,
   held: `这枚球正被拿着`,
 };
-export { Rt, Be, N, P, j, A, M, F, ze, Ve, Lt, Re, ct, rt, ut, tt, nt, et, St, Vt, tn, rn, Hn, O, Oe, Ee, k, T, E };
+export { Rt, xt, Be, N, P, j, A, M, F, ze, Ve, Lt, Re, ct, rt, ut, tt, nt, et, St, Vt, tn, rn, Hn, O, Oe, Ee, k, T, E };
