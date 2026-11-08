@@ -2719,6 +2719,8 @@ var Yn = class {
     renameSeq = 0;
     pendingRename = null;
     constructor(t, n, r) {
+      // 刚创建就切去分享，也应尝试恢复同一个好友房。
+      if (r === `friend`) n.reconnection.minUptime = 0;
       ((this.ctx = t),
         (this.room = n),
         (this.mode = r),
@@ -2742,11 +2744,15 @@ var Yn = class {
         n.onMessage(`score`, () => {}),
         n.onMessage(`evt`, (e) => this.onEvt(e)),
         n.onDrop(() => {
+          if (this.leaving) return;
+          // 等待好友时，重试窗口覆盖服务端两分钟的席位保留期。
+          n.reconnection.maxRetries = r === `friend` && n.state?.phase === `waiting` ? 30 : 15;
           ((this.dropped = !0), this.input.abort(), this.prediction.clear());
           this.fx.length = this.predictedFx.length = 0;
           this.localFx = null;
         }),
         n.onReconnect(() => {
+          if (this.leaving) { n.leave().catch(() => {}); return; }
           this.dropped = !1;
           this.snaps.length = 0;
           this.offset = null;
@@ -3413,6 +3419,13 @@ var Yn = class {
     updateHud(e, t, n) {
       let { ui: r } = this.ctx,
         i = e.phase;
+      if (i === `waiting`) {
+        const opponent = this.opp;
+        const notice = this.dropped ? `网络不稳定，正在重连…`
+          : opponent && !opponent.connected ? `好友暂时离线，等待重新连接…` : null;
+        if (notice !== this.noticeText) { this.noticeText = notice; r.setInviteStatus(notice); }
+        return;
+      }
       if (i !== `playing` && i !== `starting` && i !== `over`) return;
       let a = this.mySide ?? 0,
         o = this.me,
@@ -3485,6 +3498,8 @@ var Yn = class {
       return !!t && !this.input.aim && this.denyReason(t) === null;
     }
     dispose() {
+      this.room.reconnection.enabled = false;
+      this.room.reconnection.maxRetries = 0;
       ((this.pendingRename &&=
         (window.clearTimeout(this.pendingRename.timer),
         this.pendingRename.reject(Error(`已离开对局，请在主菜单修改昵称。`)),
@@ -4246,6 +4261,7 @@ var ir = class {
         i = typeof navigator.share == `function`;
       r.innerHTML = `<div class="spinner"><span class="pk a"></span><span class="pk b"></span></div>
       <div class="big">等待好友加入…</div>
+      <div class="mono" data-invite-status role="status" hidden></div>
       <div class="mono">房间号</div>
       <div class="room-code">${K(e)}</div>
       <div class="link-box"><input readonly value="${K(t)}"><button class="btn btn-wood btn-small" data-x="copy">${G.copy}复制</button></div>
@@ -4279,6 +4295,10 @@ var ir = class {
         };
       }),
         this.show(`wait`));
+    }
+    setInviteStatus(text) {
+      const status = this.screens.get(`wait`).querySelector(`[data-invite-status]`);
+      if (status) { status.textContent = text || ``; status.hidden = !text; }
     }
     showVersus(e, t, n, r = `匹配成功`) {
       let i = J(this.screens.get(`versus`), `.versus`),

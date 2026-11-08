@@ -85,7 +85,28 @@
      inputSeq = 0;
      offset = null;
      pending = [null, null];
-@@ -2757,7 +2750,7 @@
+@@ -2726,6 +2719,8 @@
+     renameSeq = 0;
+     pendingRename = null;
+     constructor(t, n, r) {
++      // 刚创建就切去分享，也应尝试恢复同一个好友房。
++      if (r === `friend`) n.reconnection.minUptime = 0;
+       ((this.ctx = t),
+         (this.room = n),
+         (this.mode = r),
+@@ -2749,15 +2744,19 @@
+         n.onMessage(`score`, () => {}),
+         n.onMessage(`evt`, (e) => this.onEvt(e)),
+         n.onDrop(() => {
++          if (this.leaving) return;
++          // 等待好友时，重试窗口覆盖服务端两分钟的席位保留期。
++          n.reconnection.maxRetries = r === `friend` && n.state?.phase === `waiting` ? 30 : 15;
+           ((this.dropped = !0), this.input.abort(), this.prediction.clear());
+           this.fx.length = this.predictedFx.length = 0;
+           this.localFx = null;
+         }),
+         n.onReconnect(() => {
++          if (this.leaving) { n.leave().catch(() => {}); return; }
            this.dropped = !1;
            this.snaps.length = 0;
            this.offset = null;
@@ -94,7 +115,7 @@
            this.prediction.clear();
            this.fx.length = this.predictedFx.length = 0;
            this.localFx = null;
-@@ -2800,7 +2793,7 @@
+@@ -2800,7 +2799,7 @@
            if (predicted) a.launch(t.power, zn(i, e.px, e.py));
            (this.room.send(`shoot`, { ...e, seq }),
              (this.released = { aim: { ...t }, seq, at: performance.now() }),
@@ -103,7 +124,7 @@
              this.guide.finish(),
              this.hinted || ((this.hinted = !0), o.hint(null)));
          },
-@@ -2836,10 +2829,7 @@
+@@ -2836,10 +2835,7 @@
          typeof n.state?.serverTime == `number` && this.onState(n.state));
      }
      predictionTime(now = performance.now()) {
@@ -115,7 +136,7 @@
      }
      get st() {
        return this.room.state;
-@@ -2929,6 +2919,7 @@
+@@ -2929,6 +2925,7 @@
                a: Number.isFinite(e.a) ? e.a : 0,
                color: e.c,
                vx: e.vx, vy: e.vy, av: e.av,
@@ -123,7 +144,7 @@
                launchStep: e.launchStep, launchCx: e.launchCx,
                launchPx: e.launchPx, launchPy: e.launchPy, launchSide: e.launchSide,
                held: e.held === 0 || e.held === 1 ? e.held : void 0,
-@@ -2956,7 +2947,7 @@
+@@ -2956,7 +2953,7 @@
        e.players?.forEach((player) => { shots[player.side] = player.shots; });
        this.inputSeq = Math.max(this.inputSeq, me?.inputSeq || 0);
        this.prediction.receive(r, n, e.phase, { inputSeq: me?.inputSeq, shots });
@@ -132,7 +153,7 @@
        this.setLocalFx(this.prediction.enabled);
        let c = e.timeLeft / 10;
        c !== this.timeAnchor.v && (this.timeAnchor = { v: c, at: t });
-@@ -3219,7 +3210,7 @@
+@@ -3219,7 +3216,7 @@
            ((this.overtime = s),
            s &&
              a === `playing` &&
@@ -141,7 +162,30 @@
          o !== null &&
            !this.viewSideSet &&
            ((this.viewSideSet = !0), r.setViewSide(o, !0)),
-@@ -3772,7 +3763,7 @@
+@@ -3422,6 +3419,13 @@
+     updateHud(e, t, n) {
+       let { ui: r } = this.ctx,
+         i = e.phase;
++      if (i === `waiting`) {
++        const opponent = this.opp;
++        const notice = this.dropped ? `网络不稳定，正在重连…`
++          : opponent && !opponent.connected ? `好友暂时离线，等待重新连接…` : null;
++        if (notice !== this.noticeText) { this.noticeText = notice; r.setInviteStatus(notice); }
++        return;
++      }
+       if (i !== `playing` && i !== `starting` && i !== `over`) return;
+       let a = this.mySide ?? 0,
+         o = this.me,
+@@ -3494,6 +3498,8 @@
+       return !!t && !this.input.aim && this.denyReason(t) === null;
+     }
+     dispose() {
++      this.room.reconnection.enabled = false;
++      this.room.reconnection.maxRetries = 0;
+       ((this.pendingRename &&=
+         (window.clearTimeout(this.pendingRename.timer),
+         this.pendingRename.reject(Error(`已离开对局，请在主菜单修改昵称。`)),
+@@ -3772,7 +3778,7 @@
            <li><i>2</i><span><b>实时对战，不分回合</b>：双方随时出手，比谁又快又准。<b>颜色不代表归属</b>，落在你半场的冰球都由你操作。</span></li>
            <li><i>3</i><span>按住自己半场里停下（或慢慢滑动）的冰球，拖向弹力带，压上带子后往后拉，松手发射。一次只能拿一枚。</span></li>
            <li><i>4</i><span>像弹弓一样：正后方拉直射，往右后方拉就往左前方斜射。手指往侧面挪一点，方向就跟着变一点；冰球拉满后手指还能继续往后拉，拉得越远，方向调得越细。拉伸距离决定力度。</span></li>
@@ -150,7 +194,7 @@
            <li><i>6</i><span>电脑上按 Esc 或右键可以取消当前瞄准；人机对战中按 Esc 暂停。</span></li>
          </ul>
          <div class="stack" style="margin-top:18px"><button class="btn btn-wood" data-act="back">知道了</button></div>
-@@ -3782,16 +3773,16 @@
+@@ -3782,16 +3788,16 @@
      <section class="screen" data-screen="settings">
        <div class="panel">
          <button class="icon-btn back" data-act="back" aria-label="返回" style="background:rgba(0,0,0,.06);color:var(--ink)">${G.back}</button>
@@ -173,7 +217,7 @@
            </label>
          </div>
          <div class="stack" style="margin-top:18px"><button class="btn btn-wood" data-act="back">完成</button></div>
-@@ -3861,6 +3852,11 @@
+@@ -3861,6 +3867,11 @@
                  break;
                case `help`:
                  this.show(`help`);
@@ -185,7 +229,7 @@
                  break;
                case `settings`:
                  (this.refreshSettings(), this.show(`settings`));
-@@ -3909,6 +3905,7 @@
+@@ -3909,6 +3920,7 @@
        for (let t of e.querySelectorAll(`[data-set]`))
          t.addEventListener(`change`, () => {
            (An({ [t.dataset.set]: t.checked }), this.refreshSettings());
@@ -193,7 +237,7 @@
          });
        for (let t of e.querySelectorAll(`[data-period]`))
          t.addEventListener(`click`, () => this.loadBoard(t.dataset.period));
-@@ -3918,8 +3915,6 @@
+@@ -3918,8 +3930,6 @@
        for (let e of this.root.querySelectorAll(`[data-set]`)) {
          let t = e.dataset.set;
          e.checked = U[t];
@@ -202,7 +246,26 @@
        }
      }
      loadBoard(e) {
-@@ -4459,6 +4454,7 @@
+@@ -4251,6 +4261,7 @@
+         i = typeof navigator.share == `function`;
+       r.innerHTML = `<div class="spinner"><span class="pk a"></span><span class="pk b"></span></div>
+       <div class="big">等待好友加入…</div>
++      <div class="mono" data-invite-status role="status" hidden></div>
+       <div class="mono">房间号</div>
+       <div class="room-code">${K(e)}</div>
+       <div class="link-box"><input readonly value="${K(t)}"><button class="btn btn-wood btn-small" data-x="copy">${G.copy}复制</button></div>
+@@ -4284,6 +4295,10 @@
+         };
+       }),
+         this.show(`wait`));
++    }
++    setInviteStatus(text) {
++      const status = this.screens.get(`wait`).querySelector(`[data-invite-status]`);
++      if (status) { status.textContent = text || ``; status.hidden = !text; }
+     }
+     showVersus(e, t, n, r = `匹配成功`) {
+       let i = J(this.screens.get(`versus`), `.versus`),
+@@ -4459,6 +4474,7 @@
            onCreateFriend: () => this.createFriendRoom(),
            onJoinFriend: (e) => this.joinFriendRoom(e),
            onMenuButton: () => this.match?.onMenu(),
@@ -210,7 +273,7 @@
            loadBoard: (e) => Jn(e),
          })),
          (this.ctx = {
-@@ -4685,6 +4681,7 @@
+@@ -4685,6 +4701,7 @@
      ctx = null;
      master = null;
      noise = null;
@@ -218,7 +281,7 @@
      last = new Map();
      voices = [];
      _enabled = !0;
-@@ -4707,6 +4704,7 @@
+@@ -4707,6 +4724,7 @@
            o = a.getChannelData(0);
          for (let e = 0; e < i; e++) o[e] = Math.random() * 2 - 1;
          ((this.ctx = t), (this.master = r), (this.noise = a));
@@ -226,7 +289,7 @@
        }
        this.ctx.state === `suspended` && this.ctx.resume();
      }
-@@ -4776,79 +4774,26 @@
+@@ -4776,79 +4794,26 @@
          l.start(t),
          l.stop(t + a + 0.02));
      }
@@ -322,7 +385,7 @@
      }
      turn(e) {
        let t = this.ready();
-@@ -5050,6 +4995,38 @@
+@@ -5050,6 +5015,38 @@
    let n = parseInt(e.slice(1), 16);
    return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${t.toFixed(3)})`;
  }
@@ -361,7 +424,7 @@
  function mr() {
    let e = Math.round(T * 2 * 56),
      t = Math.round(E * 2 * 56),
-@@ -5058,33 +5035,7 @@
+@@ -5058,33 +5055,7 @@
      a = (e) => (e + T) * 56,
      o = (e) => (E - e) * 56;
    ((r.fillStyle = `#e6d5b0`), r.fillRect(0, 0, e, t));
@@ -396,7 +459,7 @@
    let s = `rgba(126,149,111,0.42)`,
      c = `rgba(92,128,91,0.76)`;
    for (let e of [0, 1]) {
-@@ -5115,10 +5066,10 @@
+@@ -5115,10 +5086,10 @@
      ((r.textAlign = `center`),
        (r.textBaseline = `middle`),
        (r.fillStyle = c),
@@ -410,7 +473,7 @@
        r.restore(),
        (r.fillStyle = s));
      let l = t * be;
-@@ -5192,34 +5143,53 @@
+@@ -5192,34 +5163,53 @@
    }
    (e.closePath(), e.fill());
  }
@@ -479,7 +542,7 @@
    return lr(canvas);
  }
  function yr() {
-@@ -5281,31 +5251,52 @@
+@@ -5281,31 +5271,52 @@
  function Q(e, t, n = 0, r = new v()) {
    return r.set(e, n, -t);
  }
@@ -557,7 +620,7 @@
  }
  function Dr(e, t, n) {
    let r = new le(e, {
-@@ -5337,12 +5328,12 @@
+@@ -5337,12 +5348,12 @@
    n.anisotropy = e;
    let r = new he({
        map: n,
@@ -574,7 +637,7 @@
        let a = new g(e, r);
        return (
          a.position.copy(n),
-@@ -5359,11 +5350,13 @@
+@@ -5359,11 +5370,13 @@
      i(new fe(Y, a, s, 4, 0.14), new v(e * (T + Y / 2), o, 0), `z`);
    for (let e of [-1, 1])
      i(new fe(T * 2 + 0.02, a, Y, 4, 0.14), new v(0, o, e * (E + Y / 2)), `x`);
@@ -590,7 +653,7 @@
    );
    ((l.rotation.x = -Math.PI / 2), (l.receiveShadow = !0), t.add(l));
    let d = ye + D;
-@@ -5620,10 +5613,10 @@
+@@ -5620,10 +5633,10 @@
      let n = this.f * e;
      this.vibs.push({
        cx: n,
@@ -604,7 +667,7 @@
      });
    }
    update(e, t) {
-@@ -5896,7 +5889,7 @@
+@@ -5896,7 +5909,7 @@
      q = new r();
      s = new v();
      time = 0;
@@ -613,7 +676,7 @@
      constructor(t = 12) {
        let n = t * e.PER,
          r = new S(0.92, 32).rotateX(-Math.PI / 2);
-@@ -5936,19 +5929,19 @@
+@@ -5936,19 +5949,19 @@
          let i = n[0],
            a = n[2],
            o = Math.hypot(i.x - a.x, i.y - a.y) / Math.max(0.001, i.t - a.t);
@@ -637,7 +700,7 @@
              (this.tint[r * 3] = c ? 0.12 : 0.98),
              (this.tint[r * 3 + 1] = c ? 0.1 : 0.88),
              (this.tint[r * 3 + 2] = c ? 0.09 : 0.68),
-@@ -5963,40 +5956,41 @@
+@@ -5963,40 +5976,41 @@
    };
  function Vr() {
    let e = [],
@@ -689,7 +752,7 @@
              seed: 21,
            },
            512,
-@@ -6004,29 +5998,30 @@
+@@ -6004,29 +6018,30 @@
          ),
          n = fr(
            {
@@ -730,7 +793,7 @@
          }),
        ]),
          (this.topMats = [0, 1].map((t) =>
-@@ -6036,9 +6031,11 @@
+@@ -6036,9 +6051,11 @@
                (r.anisotropy = e),
                new he({
                  map: r,
@@ -745,7 +808,7 @@
                })
              );
            }),
-@@ -6119,6 +6116,7 @@
+@@ -6119,6 +6136,7 @@
    Ur = 1 + Tr * 0.9,
    Wr = class {
      renderer;
@@ -753,7 +816,7 @@
      scene = new c();
      camera = new s(30, 1, 0.5, 400);
      onPass = null;
-@@ -6166,16 +6164,16 @@
+@@ -6166,16 +6184,16 @@
        this.effectsOn = !window.matchMedia?.(`(prefers-reduced-motion: reduce)`)
          .matches;
        let r = this.scene;
@@ -774,7 +837,7 @@
        let s = a.shadow.camera;
        ((s.left = -15),
          (s.right = 15),
-@@ -6183,9 +6181,9 @@
+@@ -6183,9 +6201,9 @@
          (s.bottom = -20),
          (s.near = 5),
          (s.far = 70),
@@ -787,7 +850,7 @@
          r.add(a, a.target));
        let c = new ee(16769730, 0.45);
        (c.position.set(14, 16, -8),
-@@ -6214,13 +6212,22 @@
+@@ -6214,13 +6232,22 @@
      resize(e, t) {
        ((this.width = Math.max(1, e)),
          (this.height = Math.max(1, t)));
@@ -813,7 +876,7 @@
        (this.renderer.setSize(this.width, this.height, !1),
          this.sparks.setScale(
            this.height * this.renderer.getPixelRatio() * 0.55,
-@@ -6252,32 +6259,13 @@
+@@ -6252,32 +6279,13 @@
          y: ((1 - r.y) / 2) * this.height,
        };
      }
