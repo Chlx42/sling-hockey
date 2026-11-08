@@ -733,7 +733,7 @@ var pt = 1,
       group: `bonus`,
     },
     golden: {
-      name: `加时金球`,
+      name: `加时进球`,
       points: 20,
       desc: `加时赛中命中`,
       group: `bonus`,
@@ -1008,8 +1008,6 @@ var Rt = class {
   passes = [0, 0];
   prevSide = [];
   lastShot = [-1e9, -1e9];
-  emptySince = [null, null];
-  leadSince = null;
   acc = 0;
   pucks = [];
   tmp = [];
@@ -1019,7 +1017,7 @@ var Rt = class {
   scorer = new Ft(this);
   constructor(e = {}) {
     ((this.matchTime = e.matchTime ?? 60),
-      (this.overtimeTime = e.overtime ?? 60),
+      (this.overtimeTime = e.overtime ?? 120),
       (this.pucks = Be()),
       (this.world = new xt(this.pucks)),
       this.syncPucks(true));
@@ -1041,9 +1039,7 @@ var Rt = class {
       (this.passes[0] = this.passes[1] = 0),
       (this.prevSide = this.pucks.map((e) => N(e.y))),
       (this.lastShot = [-1e9, -1e9]),
-      (this.emptySince = [null, null]),
       (this.overtime = !1),
-      (this.leadSince = null),
       (this.acc = 0),
       (this.steps = 0),
       (this.events = []),
@@ -1269,31 +1265,17 @@ var Rt = class {
   checkWin() {
     for (let e of [0, 1])
       if (P(this.pucks, e) === 0) {
-        let t = this.emptySince[e];
-        if (t === null) this.emptySince[e] = this.time;
-        else if (this.time - t >= 0.8) {
-          this.finish(e, `clear`);
-          return;
-        }
-      } else this.emptySince[e] = null;
-    let e = this.count(0),
-      t = this.count(1);
-    if (this.overtime) {
-      if (e === t) this.leadSince = null;
-      else if (this.leadSince === null) this.leadSince = this.time;
-      else if (this.time - this.leadSince >= 0.8) {
-        this.finish(e < t ? 0 : 1, `overtime`);
+        this.finish(e, `clear`);
         return;
       }
+    if (this.time < this.periodEnd) return;
+    if (!this.overtime && this.overtimeTime > 0) {
+      this.overtime = !0;
+      this.emit({ type: `overtime` });
+      return;
     }
-    this.time < this.periodEnd ||
-      (e === t
-        ? !this.overtime && this.overtimeTime > 0
-          ? ((this.overtime = !0),
-            (this.leadSince = null),
-            this.emit({ type: `overtime` }))
-          : this.finish(-1, `time`)
-        : this.finish(e < t ? 0 : 1, `time`));
+    const e = this.count(0), t = this.count(1);
+    this.finish(e === t ? -1 : e < t ? 0 : 1, `time`);
   }
   finish(e, t) {
     for (let e of [0, 1]) this.holds[e] && this.drop(e);
@@ -2172,7 +2154,6 @@ function Mn(e) {
 var Nn = {
   clear: [`你率先清空了自己的半场`, `对手率先清空了半场`],
   time: [`时间到，你的半场剩余更少`, `时间到，对手的半场剩余更少`],
-  overtime: [`加时赛中你率先领先，金球制胜`, `加时赛中对手率先领先`],
   forfeit: [`对手中途离开，判你获胜`, `你中途离开，判负`],
   disconnect: [`对手断线未能重连，判你获胜`, `断线超时，判负`],
 };
@@ -2184,15 +2165,12 @@ function Fn(e, t, n, r) {
   else if (r === `clear`) {
     let r = n === t;
     e.ui.flash(r ? `清空！` : `对手清空了`, r ? `go` : `warn`);
-  } else if (r === `overtime`) {
-    let r = n === t;
-    e.ui.flash(r ? `金球制胜！` : `对手金球制胜`, r ? `go` : `warn`);
   }
 }
 function In(e, t) {
   (e.ui.flash(`加时赛`, `warn`), e.sfx.go());
-  e.ui.toast(`加时 ${t} 秒：辅助线已关闭 · 先领先的一方获胜`, {
-    ms: 2600,
+  e.ui.toast(`加时 ${t} 秒：辅助线已关闭。清空半场即获胜，到时剩余少的一方获胜。`, {
+    ms: 4000,
   });
 }
 function Ln(e, t) {
@@ -3232,7 +3210,7 @@ var Yn = class {
           ((this.overtime = s),
           s &&
             a === `playing` &&
-            In(this.ctx, Math.round((e.otTime || 600) / 10))),
+            In(this.ctx, Math.round((e.otTime || 1200) / 10))),
         o !== null &&
           !this.viewSideSet &&
           ((this.viewSideSet = !0), r.setViewSide(o, !0)),
@@ -3785,7 +3763,7 @@ var ir = class {
           <li><i>2</i><span><b>实时对战，不分回合</b>：双方随时出手，比谁又快又准。<b>颜色不代表归属</b>，落在你半场的冰球都由你操作。</span></li>
           <li><i>3</i><span>按住自己半场里停下（或慢慢滑动）的冰球，拖向弹力带，压上带子后往后拉，松手发射。一次只能拿一枚。</span></li>
           <li><i>4</i><span>像弹弓一样：正后方拉直射，往右后方拉就往左前方斜射。手指往侧面挪一点，方向就跟着变一点；冰球拉满后手指还能继续往后拉，拉得越远，方向调得越细。拉伸距离决定力度。</span></li>
-          <li><i>5</i><span><b>先把自己半场清空的一方获胜</b>；常规时间 1 分钟，时间到时半场剩余较少的一方获胜。剩余相同进入 60 秒<b>加时赛</b>：双方不显示辅助线，先领先的一方获胜。</span></li>
+          <li><i>5</i><span><b>任何时候，先清空自己半场的一方获胜</b>。1 分钟后若仍未分出胜负，自动进入 2 分钟<b>加时赛</b>并隐藏双方辅助线。加时结束时，半场剩余棋子较少的一方获胜，数量相同则平局。</span></li>
           <li><i>6</i><span>电脑上按 Esc 或右键可以取消当前瞄准；人机对战中按 Esc 暂停。</span></li>
         </ul>
         <div class="stack" style="margin-top:18px"><button class="btn btn-wood" data-act="back">知道了</button></div>

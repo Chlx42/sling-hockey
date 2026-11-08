@@ -65,6 +65,7 @@ try {
   ok(true, '进入 starting');
   ok(gameA.state.players.size === 2 && gameA.state.pucks.length === 10, '动态解码 2 人与 10 球');
   ok(gameA.state.matchTime === 600, '比赛时长正确');
+  ok(gameA.state.otTime === 1200, '加时时长正确');
   ok(gameA.state.pucks.every((p) => ['vx', 'vy', 'av', 'launchStep', 'launchCx', 'launchPx', 'launchPy', 'launchSide'].every((field) => Number.isFinite(p[field]))), '完整解码客户端预测所需状态');
   await waitFor(() => gameA.state.phase === 'playing', 'playing');
   ok(Number.isInteger(gameA.state.physicsDelay) && gameA.state.physicsDelay >= 0 && gameA.state.physicsDelay <= 255, '独立同步物理子步距发送时刻的偏移');

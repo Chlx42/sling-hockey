@@ -721,7 +721,7 @@ var pt = 1,
       group: `bonus`,
     },
     golden: {
-      name: `加时金球`,
+      name: `加时进球`,
       points: 20,
       desc: `加时赛中命中`,
       group: `bonus`,
@@ -996,8 +996,6 @@ var Rt = class {
   passes = [0, 0];
   prevSide = [];
   lastShot = [-1e9, -1e9];
-  emptySince = [null, null];
-  leadSince = null;
   acc = 0;
   pucks = [];
   tmp = [];
@@ -1007,7 +1005,7 @@ var Rt = class {
   scorer = new Ft(this);
   constructor(e = {}) {
     ((this.matchTime = e.matchTime ?? 60),
-      (this.overtimeTime = e.overtime ?? 60),
+      (this.overtimeTime = e.overtime ?? 120),
       (this.pucks = Be()),
       (this.world = new xt(this.pucks)),
       this.syncPucks(true));
@@ -1029,9 +1027,7 @@ var Rt = class {
       (this.passes[0] = this.passes[1] = 0),
       (this.prevSide = this.pucks.map((e) => N(e.y))),
       (this.lastShot = [-1e9, -1e9]),
-      (this.emptySince = [null, null]),
       (this.overtime = !1),
-      (this.leadSince = null),
       (this.acc = 0),
       (this.steps = 0),
       (this.events = []),
@@ -1257,31 +1253,17 @@ var Rt = class {
   checkWin() {
     for (let e of [0, 1])
       if (P(this.pucks, e) === 0) {
-        let t = this.emptySince[e];
-        if (t === null) this.emptySince[e] = this.time;
-        else if (this.time - t >= 0.8) {
-          this.finish(e, `clear`);
-          return;
-        }
-      } else this.emptySince[e] = null;
-    let e = this.count(0),
-      t = this.count(1);
-    if (this.overtime) {
-      if (e === t) this.leadSince = null;
-      else if (this.leadSince === null) this.leadSince = this.time;
-      else if (this.time - this.leadSince >= 0.8) {
-        this.finish(e < t ? 0 : 1, `overtime`);
+        this.finish(e, `clear`);
         return;
       }
+    if (this.time < this.periodEnd) return;
+    if (!this.overtime && this.overtimeTime > 0) {
+      this.overtime = !0;
+      this.emit({ type: `overtime` });
+      return;
     }
-    this.time < this.periodEnd ||
-      (e === t
-        ? !this.overtime && this.overtimeTime > 0
-          ? ((this.overtime = !0),
-            (this.leadSince = null),
-            this.emit({ type: `overtime` }))
-          : this.finish(-1, `time`)
-        : this.finish(e < t ? 0 : 1, `time`));
+    const e = this.count(0), t = this.count(1);
+    this.finish(e === t ? -1 : e < t ? 0 : 1, `time`);
   }
   finish(e, t) {
     for (let e of [0, 1]) this.holds[e] && this.drop(e);

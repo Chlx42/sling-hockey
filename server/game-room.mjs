@@ -22,7 +22,7 @@ export class GameRoom extends Room {
 
   onCreate({ mode, matchTime, overtime } = {}) {
     this.mode = mode === 'friend' ? 'friend' : 'queue';
-    this.engine = new Rt({ matchTime: matchTime ?? 60, overtime: overtime ?? 60 });
+    this.engine = new Rt({ matchTime: matchTime ?? 60, overtime: overtime ?? 120 });
     this.engine.drainEvents();
     this.phase = 'waiting';
     this.countdown = 0;
