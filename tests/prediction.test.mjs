@@ -1,9 +1,110 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { xt, Be, ut, k } from '../engine/index.mjs';
-import { LocalPrediction, MAX_PREDICTION_MS } from '../client/js/prediction.mjs';
+import { LocalPrediction, PredictionClock, MAX_PREDICTION_MS } from '../client/js/prediction.mjs';
 
 const create = () => new LocalPrediction((pucks) => new xt(pucks));
+
+test('快照到达抖动和 RTT 变化不会倒拨时钟或造成一帧追赶', () => {
+  const clock = new PredictionClock(), epoch = 1794100000000;
+  const delays = [40, 70, 25, 60, 35, 75, 30, 55, 40, 65];
+  let packet = 0, previous = null;
+  for (let frame = 0; frame < 60; frame++) {
+    const now = frame * 1000 / 60;
+    while (packet < delays.length && packet * 100 + delays[packet] <= now) {
+      clock.receive(epoch + packet * 100, packet * 100 + delays[packet], packet < 6 ? 80 : 120);
+      packet++;
+    }
+    const time = clock.sample(now);
+    if (time === null) continue;
+    if (previous !== null) {
+      assert.ok(time - previous >= 15.8 && time - previous <= 17.6,
+        `60fps 时不应倒退、停顿或突然补跑：${time - previous}ms`);
+    }
+    assert.equal(clock.sample(now), time, '同一帧输入与渲染共用一个时间');
+    previous = time;
+  }
+  const latest = clock.sample(1000);
+  clock.receive(epoch, 1000, 200);
+  assert.equal(clock.sample(1000), latest, '过期快照不能改变正在播放的时刻');
+});
+
+test('断流冻结时钟；网络恢复、服务器暂停和重开分别正确接管', () => {
+  const clock = new PredictionClock();
+  clock.receive(1000, 40, 80);
+  assert.equal(clock.sample(1000), 1250);
+  assert.equal(clock.sample(2000), 1250, '冻结期间不积累需要补跑的时间');
+  clock.receive(3000, 2040, 80);
+  assert.equal(clock.sample(2040), 3080, '网络断流后接管新的权威窗口');
+  assert.ok(clock.sample(2056) > 3095, '恢复后继续逐帧推进');
+
+  clock.reset();
+  clock.receive(1000, 40, 80);
+  clock.sample(1000);
+  for (let time = 1100; time <= 2000; time += 100) clock.receive(time, 1040, 80);
+  assert.equal(clock.sample(1040), 2080, '积压的连续补丁集中到达，也应接管最新棋盘');
+  assert.ok(clock.sample(1056) > 2095);
+
+  clock.reset();
+  clock.receive(1000, 40, 80);
+  clock.sample(1000);
+  clock.receive(1100, 1040, 80); // 服务器暂停后只完成了 100ms 物理。
+  const resumed = clock.sample(1040);
+  assert.ok(resumed >= 1250 && resumed <= 1292.001, '不得倒退或补算暂停期间的时间');
+  assert.ok(clock.sample(1056) - resumed < 17, '服务器恢复后不突进到外推上限');
+  clock.receive(4000, 1100, 80, 'starting');
+  clock.receive(5000, 2100, 80, 'playing');
+  assert.equal(clock.sample(2100), 5080, '新对局使用新的物理起点');
+  clock.reset();
+  assert.equal(clock.sample(2200), null);
+});
+
+test('10Hz 抖动快照下滑行、撞墙和球间碰撞持续贴合同源物理轨迹', () => {
+  const epoch = 1794100000000, delays = [40, 70, 25, 60, 35, 75, 30, 55, 40, 65, 35, 40];
+  for (const kind of ['slide', 'wall', 'puck']) {
+    const pucks = [{ id: 0, x: kind === 'wall' ? 5 : -7, y: -5, a: 0, color: 0 }];
+    if (kind === 'puck') pucks.push({ id: 1, x: 0, y: -5, a: 0, color: 1 });
+    const source = new xt(pucks), prediction = create(), clock = new PredictionClock();
+    const truth = [], packets = [];
+    try {
+      source.find(0).body.setLinvel({ x: kind === 'slide' ? 18 : 28, y: 0 }, true);
+      for (let step = 0; step <= 156; step++) {
+        truth.push(source.snapshot());
+        if (step % 12 === 0 && step / 12 < delays.length) {
+          const at = step / 120 * 1000;
+          const snapshot = truth[step].map((p) => {
+            const quantized = { ...p };
+            for (const key of ['x', 'y', 'a', 'vx', 'vy', 'av'])
+              quantized[key] = Math.fround(Math.round(p[key] * 1000) / 1000);
+            return quantized;
+          });
+          packets.push({ time: epoch + at, at: at + delays[step / 12], pucks: snapshot });
+        }
+        source.step();
+      }
+      let maxError = 0;
+      for (let frame = 0; frame < 72; frame++) {
+        const now = frame * 1000 / 60;
+        while (packets.length && packets[0].at <= now) {
+          const packet = packets.shift();
+          clock.receive(packet.time, packet.at, now < 600 ? 80 : 120);
+          prediction.receive(packet.pucks, packet.time);
+        }
+        if (!prediction.enabled) continue;
+        const time = clock.sample(now), actual = prediction.sample(time);
+        const index = (time - epoch) / (k * 1000), step = Math.floor(index);
+        const alpha = index - step;
+        for (let i = 0; i < actual.length; i++) {
+          const previous = truth[step - 1][i], current = truth[step][i];
+          const x = previous.x + (current.x - previous.x) * alpha;
+          const y = previous.y + (current.y - previous.y) * alpha;
+          maxError = Math.max(maxError, Math.hypot(actual[i].x - x, actual[i].y - y));
+        }
+      }
+      assert.ok(maxError < 0.06, `${kind} 最大轨迹偏差 ${maxError}，不应周期性回跳`);
+    } finally { source.free(); prediction.clear(); }
+  }
+});
 
 test('松手当帧即显示发射位置，ACK晚于最新快照也不重放', () => {
   const source = new xt(Be()), prediction = create();

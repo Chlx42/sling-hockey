@@ -5,6 +5,57 @@ const FX_MAX_AGE_MS = 50;
 const FX_REPEAT_MS = 100;
 const angleDelta = (from, to) => Math.atan2(Math.sin(to - from), Math.cos(to - from));
 
+// 快照和 ping 只校准目标偏差，不能直接改写正在播放的物理时间。
+export class PredictionClock {
+  constructor() { this.reset(); }
+
+  reset() {
+    this.phase = null;
+    this.latest = null;
+    this.targetOffset = 0;
+    this.lead = 0;
+    this.time = 0;
+    this.at = null;
+  }
+
+  receive(time, at, rtt = 0, phase = 'playing') {
+    if (!Number.isFinite(time) || !Number.isFinite(at)) return;
+    if (this.phase === phase && this.latest !== null && time < this.latest) return;
+    // 包含下行快照延迟与本地出手的上行提前量，不能简单换成 RTT / 2。
+    const lead = Number.isFinite(rtt) ? Math.max(0, Math.min(MAX_PREDICTION_MS, rtt)) : 0;
+    const offset = time + lead - at;
+    if (this.at === null || this.phase !== phase) {
+      this.time = time + lead;
+      this.at = at;
+      this.targetOffset = offset;
+    } else this.targetOffset += (offset - this.targetOffset) * 0.1;
+    this.phase = phase;
+    this.latest = time;
+    this.lead = lead;
+  }
+
+  sample(at) {
+    if (this.at === null) return null;
+    const elapsed = Math.max(0, at - this.at);
+    const next = this.time + elapsed;
+    if (this.latest > next) {
+      // 断流后权威棋盘已超过可播放的时间；在采样时接管最新状态，
+      // 也覆盖 WebSocket 把积压的 10Hz 补丁逐个补发的情况。
+      this.time = this.latest + this.lead;
+      this.targetOffset = this.time - at;
+    } else {
+      const error = at + this.targetOffset - next;
+      // 正常播放最多调整 5% 速度，避免包抖动或延迟读数更新导致倒退、突进。
+      const adjustment = Math.max(-elapsed * 0.05, Math.min(elapsed * 0.05, error));
+      this.time = Math.max(this.time,
+        Math.min(this.latest + MAX_PREDICTION_MS, next + adjustment));
+    }
+    // 断流时同时冻结时钟、丢弃积压；恢复后不会连续多秒顶着外推上限。
+    this.at = Math.max(this.at, at);
+    return this.time;
+  }
+}
+
 export class LocalPrediction {
   constructor(createWorld, dropSpot = (drop) => ({ x: drop.x, y: drop.y })) {
     this.createWorld = createWorld;

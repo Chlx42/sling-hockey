@@ -5,7 +5,7 @@
 // 重建：python3 deploy/build-game.py
 import * as T3 from '../vendor/three-orig.js';
 import { islandMenu } from './island-ui.mjs?v=2';
-import { LocalPrediction } from './prediction.mjs?v=4';
+import { LocalPrediction, PredictionClock } from './prediction.mjs?v=5';
 import { MaterialAudio } from './material-audio.mjs?v=1';
 import { n as e, t } from '../vendor/colyseus-orig.js';
 import * as n from '@dimforge/rapier2d-compat';
@@ -2706,7 +2706,7 @@ var Yn = class {
       return Rt.prototype.freeSpot.call({ pucks }, drop.side,
         F(drop.x, bounds.minX, bounds.maxX), F(drop.y, bounds.minY, bounds.maxY), drop.puckId);
     });
-    predictionClock = null;
+    predictionClock = new PredictionClock();
     inputSeq = 0;
     offset = null;
     pending = [null, null];
@@ -2772,7 +2772,7 @@ var Yn = class {
           this.dropped = !1;
           this.snaps.length = 0;
           this.offset = null;
-          this.predictionClock = null;
+          this.predictionClock.reset();
           this.prediction.clear();
           this.fx.length = this.predictedFx.length = 0;
           this.localFx = null;
@@ -2851,10 +2851,7 @@ var Yn = class {
         typeof n.state?.serverTime == `number` && this.onState(n.state));
     }
     predictionTime(now = performance.now()) {
-      // 跟随已完成的物理时间，服务器丢弃积压后也不会永久顶满外推上限。
-      const clock = this.predictionClock;
-      return clock ? clock.time + Math.max(0, now - clock.at) +
-        Math.min(250, Math.max(0, this.ping ?? 0)) : now + (this.offset ?? 0);
+      return this.predictionClock.sample(now) ?? now + (this.offset ?? 0);
     }
     get st() {
       return this.room.state;
@@ -2972,7 +2969,7 @@ var Yn = class {
       e.players?.forEach((player) => { shots[player.side] = player.shots; });
       this.inputSeq = Math.max(this.inputSeq, me?.inputSeq || 0);
       this.prediction.receive(r, n, e.phase, { inputSeq: me?.inputSeq, shots });
-      this.predictionClock = { time: n, at: t };
+      this.predictionClock.receive(n, t, this.ping, e.phase);
       this.setLocalFx(this.prediction.enabled);
       let c = e.timeLeft / 10;
       c !== this.timeAnchor.v && (this.timeAnchor = { v: c, at: t });
