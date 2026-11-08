@@ -19,17 +19,20 @@ var T = 9.5,
   Se = 10.5,
   Ce = 0.25,
   we = 4800,
-  Te = 0.6,
+  Te = 0.25,
   O = 3.9,
   Ee = 0.4,
-  De = 0.8,
   Oe = (68 * Math.PI) / 180,
   ke = 1.08,
   MAX_SHOT_SPEED = 44,
   Ae = Math.PI,
-  // 滑动阻力与接触摩擦分开：冰面保留惯性，擦边碰撞能传递旋转。
-  je = 0.16,
-  Me = 0.45,
+  // 桌面接触统一处理滑动与自旋，避免再叠加独立的速度阻尼。
+  je = 0,
+  Me = 0,
+  TABLE_DRAG = 6,
+  DISK_INERTIA = 0.5, // I / m，半径为 1 的均匀圆盘。
+  FRICTION_RADIUS = 2 / 3,
+  MAX_PREVIEW_STEPS = 120,
   Ne = 0.88,
   Pe = 0.78,
   Fe = 0.72,
@@ -90,17 +93,12 @@ function Ve(e, t) {
 var I = T,
   L = 1,
   He = -be,
-  Ue = (2 * I) / (1 + Ce),
-  We = 0.02,
-  Ge = 0.98;
+  Ue = (2 * I) / (1 + Ce);
 function Ke(e) {
   return e === 0 ? 1 : -1;
 }
 function qe(e) {
   return e - L < He;
-}
-function Je(e) {
-  return Math.min(Ge, Math.max(We, (e + I) / (2 * I)));
 }
 var R = { uLx: 0, uLy: 0, uRx: 0, uRy: 0, lenL: 0, lenR: 0, phi: 0 };
 function Ye(e, t, n) {
@@ -134,105 +132,97 @@ function Ye(e, t, n) {
     S = Math.max(0, Math.atan2(v * x - y * b, v * b + y * x));
   ((n.phi = S), (n.lenL = o + (L * S) / 2), (n.lenR = p + (L * S) / 2));
 }
-function Xe(e, t) {
-  return we * Math.max(0, e.lenL / (t * Ue) - 1);
-}
-function Ze(e, t) {
-  return we * Math.max(0, e.lenR / ((1 - t) * Ue) - 1);
-}
-function Qe(e, t) {
-  let n = Math.exp(Te * e.phi),
-    r = Xe(e, t),
-    i = Ze(e, t);
-  if (i > n * r) {
-    let r = We,
-      i = t;
-    for (let t = 0; t < 24; t++) {
-      let t = (r + i) / 2;
-      Ze(e, t) > n * Xe(e, t) ? (i = t) : (r = t);
+// 回撞带近似为可滑移的等张力橡皮带。受力只依赖当前位置，
+// 对应势能 we/(2*Ue)*(总带长-Ue)^2，快照恢复无需隐藏的带长历史。
+function $e(side, x, y, vx, vy, contact, out) {
+  const sign = Ke(side);
+  if (!qe(sign * y)) return ((contact.active = false), false);
+  contact.active = true;
+  Ye(sign * x, sign * y, R);
+  const tension = we * Math.max(0, (R.lenL + R.lenR) / Ue - 1);
+  let ax = sign * tension * (R.uLx + R.uRx) / Ae;
+  let ay = sign * tension * (R.uLy + R.uRy) / Ae;
+  const acceleration = Math.hypot(ax, ay);
+  if (acceleration > 1e-9) {
+    const nx = ax / acceleration, ny = ay / acceleration;
+    const incoming = vx * nx + vy * ny;
+    // 橡胶压入时耗散能量；阻尼冲量本身不能把速度反向弹出。
+    if (incoming < 0) {
+      const damping = Math.min(-12 * incoming / Ae, -incoming / k);
+      ax += damping * nx;
+      ay += damping * ny;
     }
-    return (r + i) / 2;
   }
-  if (r > n * i) {
-    let r = t,
-      i = Ge;
-    for (let t = 0; t < 24; t++) {
-      let t = (r + i) / 2;
-      Xe(e, t) > n * Ze(e, t) ? (r = t) : (i = t);
-    }
-    return (r + i) / 2;
-  }
-  return t;
+  out.ax = ax;
+  out.ay = ay;
+  return true;
 }
-function $e(e, t, n, r, i, a, o) {
-  let s = Ke(e),
-    c = s * t,
-    l = s * n;
-  if (!qe(l)) return ((a.sigma = null), !1);
-  (a.sigma === null && (a.sigma = Je(c)), Ye(c, l, R));
-  let u = Qe(R, a.sigma);
-  a.sigma = u;
-  let d = Xe(R, u),
-    f = Ze(R, u),
-    p = d * R.uLx + f * R.uRx,
-    m = d * R.uLy + f * R.uRy,
-    h = Math.hypot(p, m);
-  if (h > 1e-9) {
-    let e = p / h,
-      t = m / h,
-      n = s * r * e + s * i * t;
-    n < 0 && ((p -= 12 * n * e), (m -= 12 * n * t));
+function bandFriction(motion, ax, ay) {
+  const acceleration = Math.hypot(ax, ay);
+  if (acceleration < 1e-9) return;
+  const tx = -ay / acceleration, ty = ax / acceleration;
+  // 接触点位于受力法线反向的球缘，切向滑速包含自旋。
+  const slip = motion.x * tx + motion.y * ty - L * motion.w;
+  const limit = Te * acceleration * k;
+  const impulse = F(-slip / (1 + L * L / DISK_INERTIA), -limit, limit);
+  motion.x += impulse * tx;
+  motion.y += impulse * ty;
+  motion.w -= L * impulse / DISK_INERTIA;
+}
+function tableFriction(motion) {
+  // 均匀圆盘接触的椭圆近似：纯平移减速度为 TABLE_DRAG，
+  // 纯自旋阻力矩为 (2/3)*摩擦力*半径；混合运动共享摩擦预算。
+  const slip = Math.hypot(motion.x, motion.y, FRICTION_RADIUS * motion.w);
+  if (slip === 0) return;
+  const amount = TABLE_DRAG * k / slip;
+  const linear = Math.max(0, 1 - amount);
+  const angular = Math.max(0, 1 - amount * FRICTION_RADIUS ** 2 / DISK_INERTIA);
+  motion.x *= linear;
+  motion.y *= linear;
+  motion.w *= angular;
+  if (Math.hypot(motion.x, motion.y) < 0.015 && Math.abs(motion.w) < 0.02)
+    motion.x = motion.y = motion.w = 0;
+}
+function launchMotion(plan, limit = MAX_PREVIEW_STEPS) {
+  let distance = 0, speed = 0, steps = 0;
+  // 与实际物理相同的半隐式固定步长；只计算无障碍的离带点，
+  // 不创建额外 Rapier 世界，AI 的碰撞评估仍使用完整物理。
+  while (steps < limit && distance < plan.dist) {
+    speed += plan.omega ** 2 * (plan.dist - distance) * k;
+    speed = Math.max(0, speed - TABLE_DRAG * k);
+    distance += speed * k;
+    steps++;
   }
-  return ((o.ax = (s * p) / Ae), (o.ay = (s * m) / Ae), !0);
+  return { distance, speed, steps };
 }
 function et(e) {
   return MAX_SHOT_SPEED * Math.min(1, Math.max(0, e) / O) ** +ke;
 }
-function tt(e, t, n, r) {
-  let i = Ke(e),
-    a = M(e),
-    o = i * (n - t),
-    s = i * (a - r),
-    c = Math.hypot(n - t, r - a),
-    l = et(c);
-  if (!(s > 1e-6) || l < 1e-6) return null;
-  let u = -De * Math.atan2(o, s),
-    d = Math.sin(u),
-    f = Math.cos(u),
-    p = s / f,
-    m = l / p,
-    h = Math.PI / (2 * m);
-  return {
-    px: n,
-    py: r,
-    dx: i * d,
-    dy: i * f,
-    pull: c,
-    dist: p,
-    speed: l,
-    omega: m,
-    duration: h,
-    steps: Math.max(1, Math.ceil(h / k - 1e-9)),
-  };
+function tt(side, cx, px, py, preview = true) {
+  const dy = M(side) - py, dx = cx - px;
+  const pull = Math.hypot(dx, dy), speed = et(pull);
+  if (A(side) * dy <= 1e-6 || speed < 1e-6) return null;
+  const plan = { px, py, dx: dx / pull, dy: dy / pull, pull, dist: pull,
+    speed, omega: speed / pull };
+  if (!preview) return plan;
+  const exit = launchMotion(plan);
+  return Object.assign(plan, { steps: exit.steps, duration: exit.steps * k,
+    exitDistance: exit.distance, exitSpeed: exit.speed });
 }
-function nt(e, t) {
-  return e.dist * (1 - Math.cos(e.omega * Math.min(t * k, e.duration)));
+function nt(plan, steps) {
+  return launchMotion(plan, steps).distance;
 }
-function rt(e, t, n, r) {
-  let i = tt(e, t, n, r);
-  if (!i) return { ok: !1, x: n, y: r, vx: 0, vy: 0, speed: 0, steps: 0 };
-  let a = nt(i, i.steps),
-    o = i.dx * i.speed,
-    s = i.dy * i.speed,
-    c = Ke(e) * s;
+function rt(side, cx, px, py) {
+  const plan = tt(side, cx, px, py);
+  if (!plan) return { ok: false, x: px, y: py, vx: 0, vy: 0, speed: 0, steps: 0 };
   return {
-    ok: i.speed >= 3 && c > 0.2 * i.speed,
-    x: i.px + i.dx * a,
-    y: i.py + i.dy * a,
-    vx: o,
-    vy: s,
-    speed: i.speed,
-    steps: i.steps,
+    ok: plan.exitDistance >= plan.dist && plan.exitSpeed >= 3 && A(side) * plan.dy > 0.2,
+    x: px + plan.dx * plan.exitDistance,
+    y: py + plan.dy * plan.exitDistance,
+    vx: plan.dx * plan.exitSpeed,
+    vy: plan.dy * plan.exitSpeed,
+    speed: plan.exitSpeed,
+    steps: plan.steps,
   };
 }
 var it = T - 1,
@@ -345,7 +335,6 @@ var pt = 1,
   _t = 3,
   vt = 0.6,
   yt = be - 1 - 0.05,
-  bt = 0.001,
   xt = class {
     world = null;
     queue = null;
@@ -354,6 +343,7 @@ var pt = 1,
     pre = new Float64Array();
     scratch = { x: 0, y: 0 };
     acc = { ax: 0, ay: 0 };
+    motion = { x: 0, y: 0, w: 0 };
     constructor(e) {
       this.reset(e);
     }
@@ -452,9 +442,8 @@ var pt = 1,
           color: t.color,
           body: i,
           collider: a,
-          band: [{ sigma: null }, { sigma: null }],
+          band: [{ active: false }, { active: false }],
           launch: null,
-          launching: !1,
           quietSteps: 0,
         }
       );
@@ -471,15 +460,14 @@ var pt = 1,
         a.body.setTranslation({ x: n, y: r }, !0),
         a.body.setLinvel({ x: 0, y: 0 }, !0),
         a.body.setAngvel(0, !0),
-        (a.band[0].sigma = null),
-        (a.band[1].sigma = null));
-      let o = tt(i, t, n, r);
+        (a.band[0].active = false),
+        (a.band[1].active = false));
+      let o = tt(i, t, n, r, false);
       o &&
-        ((a.launch = { plan: o, step: 0, tx: n, ty: r, cx: t, side: i }),
-        a.body.setLinearDamping(0));
+        (a.launch = { plan: o, step: 0, cx: t, side: i });
     }
     endLaunch(e) {
-      e.launch && ((e.launch = null), e.body.setLinearDamping(je));
+      e.launch = null;
     }
     isLaunching(e) {
       return !!this.find(e)?.launch;
@@ -492,8 +480,8 @@ var pt = 1,
         t.body.setLinvel({ x: 0, y: 0 }, !1),
         t.body.setAngvel(0, !1),
         t.body.setEnabled(!1),
-        (t.band[0].sigma = null),
-        (t.band[1].sigma = null));
+        (t.band[0].active = false),
+        (t.band[1].active = false));
     }
     place(e, t, n) {
       let r = this.find(e);
@@ -504,8 +492,8 @@ var pt = 1,
         r.body.setTranslation({ x: t, y: n }, !0),
         r.body.setLinvel({ x: 0, y: 0 }, !0),
         r.body.setAngvel(0, !0),
-        (r.band[0].sigma = null),
-        (r.band[1].sigma = null));
+        (r.band[0].active = false),
+        (r.band[1].active = false));
     }
     restore(pucks) {
       // 网络校正复用已有 WASM 世界，避免每个快照重建碰撞体。
@@ -513,9 +501,8 @@ var pt = 1,
         const entry = this.find(puck.id);
         if (!entry) continue;
         this.endLaunch(entry);
-        entry.launching = false;
         entry.quietSteps = 0;
-        entry.band[0].sigma = entry.band[1].sigma = null;
+        entry.band[0].active = entry.band[1].active = false;
         const body = entry.body;
         body.setEnabled(!(puck.held >= 0));
         body.setTranslation({ x: puck.x, y: puck.y }, true);
@@ -523,11 +510,10 @@ var pt = 1,
         body.setLinvel({ x: puck.vx ?? 0, y: puck.vy ?? 0 }, true);
         body.setAngvel(puck.av ?? 0, true);
         if (puck.launchStep >= 0 && !(puck.held >= 0)) {
-          const plan = tt(puck.launchSide, puck.launchCx, puck.launchPx, puck.launchPy);
-          if (plan && puck.launchStep < plan.steps) {
-            entry.launch = { plan, step: puck.launchStep, tx: puck.x, ty: puck.y,
+          const plan = tt(puck.launchSide, puck.launchCx, puck.launchPx, puck.launchPy, false);
+          if (plan && lt(puck.launchSide, puck.y)) {
+            entry.launch = { plan, step: puck.launchStep,
               cx: puck.launchCx, side: puck.launchSide };
-            body.setLinearDamping(0);
           }
         }
         if (!entry.launch && !puck.vx && !puck.vy && !puck.av && Math.abs(puck.y) < yt)
@@ -538,97 +524,69 @@ var pt = 1,
       let t = this.world;
       if (!t || !this.queue) return false;
       // 静止棋盘无需碰撞检测/求解；launch、place 和 restore 会重新唤醒。
-      if (!this.bodies.some(({ body, launch }) => launch || (body.isEnabled() && !body.isSleeping())))
+      if (!this.bodies.some(({ body, launch }) => body.isEnabled() &&
+          (launch || !body.isSleeping())))
         return false;
-      let n = this.bodies.length,
-        r = this.scratch,
-        i = this.acc;
-      for (let e = 0; e < n; e++) {
-        let t = this.bodies[e],
-          n = t.launch;
-        if (((t.launching = !!n), !n)) continue;
-        let r = nt(n.plan, n.step + 1);
-        ((n.tx = n.plan.px + n.plan.dx * r),
-          (n.ty = n.plan.py + n.plan.dy * r));
-        let i = t.body.translation();
-        (t.body.setLinvel({ x: (n.tx - i.x) / k, y: (n.ty - i.y) / k }, !0),
-          t.body.setAngvel(0, !0));
-      }
-      for (let t = 0; t < n; t++) {
-        let n = this.bodies[t];
-        if (!n.body.isEnabled() || n.body.isSleeping() || n.launch) continue;
-        let a = n.body.translation();
-        if (Math.abs(a.y) < yt) {
-          ((n.band[0].sigma = null), (n.band[1].sigma = null));
-          continue;
-        }
-        let o = n.body.linvel(r),
-          s = o.x,
-          c = o.y,
-          l = !1;
-        for (let t = 0; t < 2; t++) {
-          let r = n.band[t].sigma !== null;
-          if ($e(t, a.x, a.y, s, c, n.band[t], i)) {
-            if (!r && e) {
-              let speed = -A(t) * c;
-              speed > 0.4 && e.push({ k: `band`, x: a.x, y: a.y, v: speed, s: t, a: n.id });
+      const motion = this.motion, acceleration = this.acc;
+      for (const entry of this.bodies) {
+        const body = entry.body;
+        if (!body.isEnabled() || (body.isSleeping() && !entry.launch)) continue;
+        const position = body.translation(), velocity = body.linvel();
+        motion.x = velocity.x;
+        motion.y = velocity.y;
+        motion.w = body.angvel();
+        if (entry.launch && !lt(entry.launch.side, position.y)) this.endLaunch(entry);
+        if (entry.launch) {
+          const launch = entry.launch, stiffness = launch.plan.omega ** 2;
+          // 手松开后只施加当前位置对应的弹簧冲量，碰撞产生的速度和旋转
+          // 都由求解器保留，不再把球强行拉回预设轨迹或补写“满速”。
+          const ax = (launch.cx - position.x) * stiffness;
+          const ay = (M(launch.side) - position.y) * stiffness;
+          motion.x += ax * k;
+          motion.y += ay * k;
+          bandFriction(motion, ax, ay);
+        } else if (Math.abs(position.y) >= yt) {
+          for (let side = 0; side < 2; side++) {
+            const contact = entry.band[side], wasActive = contact.active;
+            if (!$e(side, position.x, position.y, motion.x, motion.y, contact, acceleration)) continue;
+            if (!wasActive && e) {
+              const incoming = -A(side) * motion.y;
+              if (incoming > 0.4) e.push({ k: `band`, x: position.x, y: position.y,
+                v: incoming, s: side, a: entry.id });
             }
-            ((s += i.ax * k), (c += i.ay * k), (l = !0));
+            motion.x += acceleration.ax * k;
+            motion.y += acceleration.ay * k;
+            bandFriction(motion, acceleration.ax, acceleration.ay);
           }
-        }
-        l && n.body.setLinvel({ x: s, y: c }, !0);
+        } else entry.band[0].active = entry.band[1].active = false;
+        tableFriction(motion);
+        const elastic = !!entry.launch || entry.band[0].active || entry.band[1].active;
+        body.setLinvel(motion, elastic);
+        body.setAngvel(motion.w, elastic);
       }
       if (e)
-        for (let e = 0; e < n; e++) {
-          let t = this.bodies[e].body.linvel(r);
-          ((this.pre[2 * e] = t.x), (this.pre[2 * e + 1] = t.y));
+        for (let index = 0; index < this.bodies.length; index++) {
+          const velocity = this.bodies[index].body.linvel();
+          this.pre[2 * index] = velocity.x;
+          this.pre[2 * index + 1] = velocity.y;
         }
-      (t.step(this.queue),
-        e &&
-          this.queue.drainCollisionEvents((t, n, r) => {
-            r && this.onContact(t, n, e);
-          }));
-      for (let e = 0; e < n; e++) {
-        let t = this.bodies[e],
-          n = t.launch;
-        if (!n) continue;
-        n.step++;
-        let r = t.body.translation();
-        Math.abs(r.x - n.tx) > bt || Math.abs(r.y - n.ty) > bt
-          ? this.endLaunch(t)
-          : n.step >= n.plan.steps &&
-            (t.body.setLinvel(
-              { x: n.plan.dx * n.plan.speed, y: n.plan.dy * n.plan.speed },
-              !0,
-            ),
-            this.endLaunch(t));
-      }
-      // 加快出手，但让低速尾段尽快停稳，避免整盘一直漂移。
-      let a = 6 * k,
-        o = 0.8 * k;
-      for (let e = 0; e < n; e++) {
-        let t = this.bodies[e],
-          n = t.body;
-        if (t.launching) {
-          t.launching = !1;
-          continue;
+      t.step(this.queue);
+      if (e) this.queue.drainCollisionEvents((a, b, started) => {
+        if (started) this.onContact(a, b, e);
+      });
+      for (const entry of this.bodies) {
+        const body = entry.body;
+        if (entry.launch) {
+          // step 只标记发射仍在进行，不让长时间堵球导致协议计数溢出。
+          entry.launch.step = Math.min(MAX_PREVIEW_STEPS, entry.launch.step + 1);
+          if (!lt(entry.launch.side, body.translation().y)) this.endLaunch(entry);
         }
-        if (n.isSleeping() || !n.isEnabled()) continue;
-        let i = n.linvel(r),
-          s = Math.sqrt(i.x * i.x + i.y * i.y);
-        if (s > 0) {
-          let e = s > a ? (s - a) / s : 0;
-          n.setLinvel({ x: i.x * e, y: i.y * e }, !1);
-        }
-        let c = n.angvel();
-        if (c !== 0) {
-          let e = Math.abs(c);
-          n.setAngvel(e > o ? c - Math.sign(c) * o : 0, !1);
-        }
-        // 连续静止后休眠；带上仍有弹性势能时不能提前停下。
-        if (s <= a && Math.abs(c) <= o && t.band[0].sigma === null && t.band[1].sigma === null) {
-          if (++t.quietSteps >= 12) n.sleep();
-        } else t.quietSteps = 0;
+        if (body.isSleeping() || !body.isEnabled()) continue;
+        const velocity = body.linvel();
+        // 被桌面静摩擦抵住的轻压带也可休眠；之后的碰撞/抓放/快照会唤醒。
+        if (!entry.launch && velocity.x === 0 && velocity.y === 0 && body.angvel() === 0) {
+          if (++entry.quietSteps >= 12) body.sleep();
+        } else entry.quietSteps = 0;
       }
       return true;
     }
