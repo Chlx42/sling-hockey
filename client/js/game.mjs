@@ -4,6 +4,7 @@
 // 网络层通过 Colyseus SDK 对接权威服务器
 // 重建：python3 deploy/build-game.py
 import * as T3 from '../vendor/three-orig.js';
+import { islandMenu } from './island-ui.mjs';
 import { LocalPrediction } from './prediction.mjs?v=3';
 import { n as e, t } from '../vendor/colyseus-orig.js';
 import * as n from '@dimforge/rapier2d-compat';
@@ -3803,29 +3804,13 @@ var ir = class {
         )
         .join(``);
       return `
-    <section class="screen soft" data-screen="menu">
-      <div class="panel">
-        <div class="logo">${nr}<div class="name">桌上<b>弹射</b>冰球</div><div class="en">SLING · PUCK · 2.5D</div></div>
-        <div class="stack">
-          <div class="field"><label for="nick">昵称</label><input id="nick" maxlength="40" autocomplete="off" spellcheck="false"></div>
-          <button class="mode-btn" data-act="ai"><span class="ic ic-red">${G.robot}</span><span><div class="t">人机对战</div><div class="d">三档难度 AI，实时对打随时开练</div></span><span class="chev">${G.chev}</span></button>
-          <button class="mode-btn" data-act="match"><span class="ic ic-teal">${G.globe}</span><span><div class="t">在线匹配</div><div class="d">进入队列，自动匹配对手实时对战</div></span><span class="chev">${G.chev}</span></button>
-          <button class="mode-btn" data-act="friend"><span class="ic ic-ink">${G.friends}</span><span><div class="t">好友对战</div><div class="d">创建房间，发链接邀请好友</div></span><span class="chev">${G.chev}</span></button>
-        </div>
-        <div class="footer-links">
-          <button class="btn btn-ghost" data-act="board">${G.podium}排行榜</button>
-          <button class="btn btn-ghost" data-act="help">${G.help}玩法</button>
-          <button class="btn btn-ghost" data-act="settings">${G.gear}设置</button>
-          <button class="btn btn-ghost" data-act="sound"><span class="snd"></span><span class="snd-t"></span></button>
-        </div>
-      </div>
-    </section>
+    ${islandMenu(G)}
 
     <section class="screen" data-screen="ai">
       <div class="panel">
         <button class="icon-btn back" data-act="back" aria-label="返回" style="background:rgba(0,0,0,.06);color:var(--ink)">${G.back}</button>
         <h2 style="text-align:center">人机对战</h2>
-        <p class="sub" style="text-align:center">实时对战，不分回合。AI 会模拟弹道选择方向和力度，难度越高出手越快、瞄得越准</p>
+        <p class="sub" style="text-align:center">先选一个适合你的节奏。随时出手，先清空自己的半场就获胜。</p>
         <div class="levels">${e}</div>
         <div class="stack" style="margin-top:18px"><button class="btn btn-primary" data-act="start-ai">${G.play}开始对战</button></div>
       </div>
@@ -3879,7 +3864,7 @@ var ir = class {
     <section class="screen" data-screen="settings">
       <div class="panel">
         <button class="icon-btn back" data-act="back" aria-label="返回" style="background:rgba(0,0,0,.06);color:var(--ink)">${G.back}</button>
-        <h2 style="text-align:center">高级设置</h2>
+        <h2 style="text-align:center">小岛设置</h2>
         <p class="sub" style="text-align:center">关掉辅助线，全凭手感瞄准，挑战更高难度</p>
         <div class="settings">
           <label class="setting">
@@ -5154,14 +5139,14 @@ function mr() {
     i = sr(42),
     a = (e) => (e + T) * 56,
     o = (e) => (E - e) * 56;
-  ((r.fillStyle = `#b68b5b`), r.fillRect(0, 0, e, t));
+  ((r.fillStyle = `#e6d5b0`), r.fillRect(0, 0, e, t));
   for (let n = 0; n < 70; n++) {
     let n = i() * e,
       a = i() * t,
       o = 80 + i() * 380,
       s = r.createRadialGradient(n, a, 0, n, a, o),
       c = i() < 0.55;
-    (s.addColorStop(0, c ? `rgba(92,60,30,0.10)` : `rgba(226,190,140,0.10)`),
+    (s.addColorStop(0, c ? `rgba(130,145,99,0.035)` : `rgba(255,251,226,0.08)`),
       s.addColorStop(1, `rgba(0,0,0,0)`),
       (r.fillStyle = s),
       r.fillRect(0, 0, e, t));
@@ -5173,17 +5158,17 @@ function mr() {
       s = i() * Math.PI;
     ((r.strokeStyle =
       i() < 0.5
-        ? `rgba(70,44,20,${0.05 + i() * 0.08})`
-        : `rgba(240,210,165,${0.05 + i() * 0.08})`),
+        ? `rgba(142,132,99,${0.015 + i() * 0.025})`
+        : `rgba(255,255,237,${0.03 + i() * 0.04})`),
       (r.lineWidth = 0.6 + i() * 0.8),
       r.beginPath(),
       r.moveTo(n, a),
       r.lineTo(n + Math.cos(s) * o, a + Math.sin(s) * o),
       r.stroke());
   }
-  ur(r, e, t, 14, i);
-  let s = `rgba(52,47,43,0.86)`,
-    c = `rgba(196,58,44,0.92)`;
+  ur(r, e, t, 5, i);
+  let s = `rgba(126,149,111,0.42)`,
+    c = `rgba(92,128,91,0.76)`;
   for (let e of [0, 1]) {
     let t = e === 0 ? -1 : 1,
       n = t * 8.4;
@@ -5213,9 +5198,9 @@ function mr() {
       (r.textBaseline = `middle`),
       (r.fillStyle = c),
       (r.font = `900 ${0.98 * 56}px "PingFang SC","Microsoft YaHei","Noto Sans SC",sans-serif`),
-      r.fillText(`弹射冰球`, 0, -12.32),
+      r.fillText(`小岛冰球`, 0, -12.32),
       (r.font = `700 23.52px "Avenir Next","Segoe UI",Arial,sans-serif`),
-      gr(r, `SLING · PUCK`, 0, 43.68, 0.1 * 56),
+      gr(r, `ISLAND · PUCK`, 0, 43.68, 0.1 * 56),
       r.restore(),
       (r.fillStyle = s));
     let l = t * be;
@@ -5232,7 +5217,7 @@ function mr() {
       r.closePath(),
       r.fill());
   }
-  r.fillStyle = `rgba(52,47,43,0.5)`;
+  r.fillStyle = `rgba(126,149,111,0.38)`;
   for (let t of [-1, 1]) hr(r, 0, o(t * (D + 0.18)) - 1.68, e, 3.36, i);
   let l = (e, t, n, i, a, o) => {
       let s =
@@ -5243,8 +5228,8 @@ function mr() {
             : a === `t`
               ? r.createLinearGradient(0, t, 0, t + o)
               : r.createLinearGradient(0, t + i, 0, t + i - o);
-      (s.addColorStop(0, `rgba(40,22,8,0.42)`),
-        s.addColorStop(1, `rgba(40,22,8,0)`),
+      (s.addColorStop(0, `rgba(111,102,68,0.16)`),
+        s.addColorStop(1, `rgba(111,102,68,0)`),
         (r.fillStyle = s),
         r.fillRect(e, t, n, i));
     },
@@ -5262,7 +5247,7 @@ function mr() {
 function hr(e, t, n, r, i, a) {
   e.fillRect(t, n, r, i);
   let o = e.fillStyle;
-  e.fillStyle = `rgba(182,139,91,0.35)`;
+  e.fillStyle = `rgba(240,229,201,0.35)`;
   let s = Math.max(4, Math.round((r * i) / 140));
   for (let o = 0; o < s; o++)
     e.fillRect(t + a() * r, n + a() * i, 1 + a() * 2, 1 + a() * 2);
@@ -5290,39 +5275,34 @@ function _r(e, t, n, r) {
   (e.closePath(), e.fill());
 }
 function vr(e, t) {
-  let [n, r] = cr(256, 256);
-  return (
-    e === `maple`
-      ? dr(r, 256, 256, {
-          base: `#e6c99a`,
-          dark: `#a9784a`,
-          light: `#f6e2bd`,
-          lines: 22,
-          wave: 0.6,
-          seed: t,
-        })
-      : dr(r, 256, 256, {
-          base: `#211d1a`,
-          dark: `#0c0a09`,
-          light: `#3b342e`,
-          lines: 26,
-          wave: 0.6,
-          seed: t,
-        }),
-    (r.lineWidth = 3),
-    (r.strokeStyle =
-      e === `maple` ? `rgba(120,80,40,0.45)` : `rgba(255,255,255,0.07)`),
-    r.beginPath(),
-    r.arc(128, 128, 87.04, 0, Math.PI * 2),
-    r.stroke(),
-    (r.lineWidth = 1.5),
-    (r.strokeStyle =
-      e === `maple` ? `rgba(255,240,210,0.5)` : `rgba(0,0,0,0.5)`),
-    r.beginPath(),
-    r.arc(128, 129.5, 87.04, 0, Math.PI * 2),
-    r.stroke(),
-    lr(n)
-  );
+  const [canvas, ctx] = cr(256, 256);
+  const coral = e === `maple`;
+  dr(ctx, 256, 256, {
+    base: coral ? `#ce8867` : `#51876a`,
+    dark: coral ? `#b47c61` : `#477357`,
+    light: coral ? `#f0c4a0` : `#a6c39c`,
+    lines: 15, wave: 0.6, seed: t,
+  });
+  ctx.strokeStyle = coral ? `#f5d2a8` : `#bbd5ac`;
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.arc(128, 128, 89, 0, Math.PI * 2);
+  ctx.stroke();
+  // A small carved leaf on each puck, readable even at phone sizes.
+  ctx.fillStyle = coral ? `#f7ddba` : `#d6e4bc`;
+  ctx.beginPath();
+  ctx.moveTo(103, 145);
+  ctx.bezierCurveTo(85, 107, 116, 82, 158, 94);
+  ctx.bezierCurveTo(171, 134, 139, 163, 103, 145);
+  ctx.fill();
+  ctx.strokeStyle = coral ? `#c18a69` : `#628b69`;
+  ctx.lineWidth = 5;
+  ctx.lineCap = `round`;
+  ctx.beginPath();
+  ctx.moveTo(99, 158);
+  ctx.lineTo(141, 112);
+  ctx.stroke();
+  return lr(canvas);
 }
 function yr() {
   let [e, t] = cr(128, 128),
@@ -5350,20 +5330,28 @@ function br() {
   return ((r.colorSpace = m), r);
 }
 function xr() {
-  let e = fr(
-    {
-      base: `#2c1f17`,
-      dark: `#120b07`,
-      light: `#4a3426`,
-      lines: 60,
-      wave: 1.6,
-      seed: 9,
-      knots: 2,
-    },
-    1024,
-    1024,
-  );
-  return (e.repeat.set(3, 3), e);
+  const [canvas, ctx] = cr(512, 512);
+  const random = sr(9);
+  ctx.fillStyle = `#b4c99e`;
+  ctx.fillRect(0, 0, 512, 512);
+  // A quiet grass pattern, drawn once into a reused texture.
+  for (let y = 18; y < 512; y += 45) {
+    for (let x = 14; x < 512; x += 48) {
+      const px = x + (random() - 0.5) * 20;
+      const py = y + (random() - 0.5) * 18;
+      const size = 3 + random() * 4;
+      ctx.fillStyle = random() > 0.5 ? `#b7caa244` : `#e2e9c444`;
+      ctx.beginPath();
+      ctx.moveTo(px, py - size);
+      ctx.lineTo(px - size * 0.8, py + size * 0.6);
+      ctx.lineTo(px + size * 0.8, py + size * 0.6);
+      ctx.closePath();
+      ctx.fill();
+    }
+  }
+  const texture = lr(canvas, !0);
+  texture.repeat.set(5, 5);
+  return texture;
 }
 var Y = 1.3,
   Sr = 1.25,
@@ -5417,10 +5405,10 @@ function Or(e) {
   let t = new ne(),
     n = fr(
       {
-        base: `#e4c797`,
-        dark: `#b08655`,
-        light: `#f4e1bb`,
-        lines: 46,
+        base: `#cfa575`,
+        dark: `#bb9464`,
+        light: `#f3d6a6`,
+        lines: 28,
         wave: 1.1,
         seed: 3,
         knots: 1,
@@ -5431,8 +5419,8 @@ function Or(e) {
   n.anisotropy = e;
   let r = new he({
       map: n,
-      roughness: 0.52,
-      clearcoat: 0.3,
+      roughness: 0.82,
+      clearcoat: 0.08,
       clearcoatRoughness: 0.5,
     }),
     i = (e, n, i) => {
@@ -5504,7 +5492,7 @@ function Or(e) {
   b.anisotropy = e;
   let x = new g(
     new p(160, 160),
-    new _({ map: b, roughness: 0.68, metalness: 0 }),
+    new _({ map: b, roughness: 0.95, metalness: 0 }),
   );
   return (
     (x.rotation.x = -Math.PI / 2),
@@ -6086,9 +6074,9 @@ var Hr = class {
     constructor(e) {
       let t = fr(
           {
-            base: `#1f1b18`,
-            dark: `#0b0908`,
-            light: `#3a332d`,
+            base: `#548368`,
+            dark: `#3f6b53`,
+            light: `#87ab8b`,
             lines: 30,
             wave: 0.5,
             seed: 21,
@@ -6098,9 +6086,9 @@ var Hr = class {
         ),
         n = fr(
           {
-            base: `#e0c08e`,
-            dark: `#a37446`,
-            light: `#f3dcb2`,
+            base: `#c79072`,
+            dark: `#a76f54`,
+            light: `#e7ba97`,
             lines: 30,
             wave: 0.5,
             seed: 22,
@@ -6112,14 +6100,14 @@ var Hr = class {
       ((this.sideMats = [
         new he({
           map: t,
-          roughness: 0.34,
-          clearcoat: 0.85,
+          roughness: 0.85,
+          clearcoat: 0.08,
           clearcoatRoughness: 0.22,
         }),
         new he({
           map: n,
-          roughness: 0.46,
-          clearcoat: 0.55,
+          roughness: 0.85,
+          clearcoat: 0.08,
           clearcoatRoughness: 0.3,
         }),
       ]),
@@ -6130,8 +6118,8 @@ var Hr = class {
               (r.anisotropy = e),
               new he({
                 map: r,
-                roughness: t === 0 ? 0.32 : 0.45,
-                clearcoat: t === 0 ? 0.9 : 0.55,
+                roughness: 0.86,
+                clearcoat: 0.08,
                 clearcoatRoughness: 0.22,
               })
             );
@@ -6250,7 +6238,7 @@ var Hr = class {
         (t.shadowMap.needsUpdate = !0),
         (t.shadowMap.type = 1),
         (t.toneMapping = 4),
-        (t.toneMappingExposure = 1.05),
+        (t.toneMappingExposure = 0.95),
         (t.outputColorSpace = m),
         (this.renderer = t));
       e.addEventListener(`webglcontextrestored`, () => {
@@ -6260,13 +6248,13 @@ var Hr = class {
       this.effectsOn = !window.matchMedia?.(`(prefers-reduced-motion: reduce)`)
         .matches;
       let r = this.scene;
-      ((r.background = new w(1380107)), (r.fog = new oe(1380107, 70, 150)));
+      ((r.background = new w(0xdce6c7)), (r.fog = new oe(0xdce6c7, 70, 150)));
       let i = new ue(t);
       ((r.environment = i.fromScene(new se(), 0.04).texture),
-        (r.environmentIntensity = 0.32),
+        (r.environmentIntensity = 0.35),
         i.dispose(),
-        r.add(new te(16774114, 3877406, 0.72)));
-      let a = new ee(16773340, 2.7);
+        r.add(new te(0xfff9e8, 0xa8bc91, 0.95)));
+      let a = new ee(0xfff6df, 1.8);
       (a.position.set(-11, 34, 5), (a.castShadow = !0));
       let o = Math.min(window.innerWidth, window.innerHeight) < 600;
       a.shadow.mapSize.set(o ? 1024 : 1536, o ? 1024 : 1536);
@@ -6277,7 +6265,7 @@ var Hr = class {
         (s.bottom = -20),
         (s.near = 5),
         (s.far = 70),
-        (a.shadow.radius = 4),
+        (a.shadow.radius = 5),
         (a.shadow.bias = -4e-4),
         (a.shadow.normalBias = 0.025),
         r.add(a, a.target));
@@ -6287,7 +6275,7 @@ var Hr = class {
         r.add(Or(n)),
         (this.pucks = new Hr(n)),
         r.add(this.pucks.group));
-      let l = new _({ color: 1512466, roughness: 0.55, metalness: 0 });
+      let l = new _({ color: 0x768661, roughness: 0.9, metalness: 0 });
       ((this.bands = [new Ir(0, l), new Ir(1, l)]),
         r.add(
           this.bands[0].mesh,

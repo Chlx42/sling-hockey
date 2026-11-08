@@ -33,7 +33,7 @@ node deploy/benchmark-network.mjs # 同轨迹下比较新旧 Schema 增量编码
 `client/js/game.mjs` 已包含运行所需客户端代码。重建需准备原始分析产物目录
 （默认 `/tmp/bin-hlool-re`，可用 `SLING_BUNDLE_DIR` 指定），运行 `python3 deploy/build-game.py`；
 构建会应用 `deploy/client-performance.patch`、`deploy/client-colyseus.patch`、
-`deploy/client-physics.patch`，保留渲染优化、队列修复与本地预测。物理改动以 `engine/index.mjs`
+`deploy/client-physics.patch` 和 `deploy/client-island.patch`，保留渲染优化、队列修复、本地预测与界面改版。物理改动以 `engine/index.mjs`
 为准，修改后重建客户端，发布时一起更新 `client/js/prediction.mjs`。
 
 ## 本地计算与服务器边界
@@ -69,6 +69,13 @@ node deploy/benchmark-network.mjs # 同轨迹下比较新旧 Schema 增量编码
 持续发射 143.27→148.85ms（约 +4%）；后者包含更持久的滑行旋转。这是此前物理版本的
 测量，后续时间标记、输入确认与本次手感调整未重跑测试或基准。网络编码可用上述脚本自行测量，
 它不包含首次握手、WebSocket 包头、碰撞事件或 AI；不能换算为总流量或线上容量。
+
+## 小岛主题
+
+首页结构在 `client/js/island-ui.mjs`，主题样式在 `client/css/island.css`，本地 SVG 插画与图标在
+`client/assets/`。页面和对局采用奶油纸卡、草地与浅木桌配色，无外部字体或图片依赖。
+`deploy/client-island.patch` 保存生成客户端中的主题入口与渲染调整，构建脚本会在物理补丁后自动应用；
+修改 `game.mjs` 的主题部分时需同步该补丁，避免重建丢失。
 
 ## 目录结构
 

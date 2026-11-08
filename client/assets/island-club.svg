@@ -1,0 +1,59 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 680 500" fill="none">
+  <defs>
+    <linearGradient id="land" x1="340" y1="178" x2="340" y2="447" gradientUnits="userSpaceOnUse"><stop stop-color="#c8d9a7"/><stop offset="1" stop-color="#9dbb8e"/></linearGradient>
+    <linearGradient id="wood" x1="293" y1="140" x2="382" y2="375" gradientUnits="userSpaceOnUse"><stop stop-color="#f4dcac"/><stop offset="1" stop-color="#dcb880"/></linearGradient>
+    <linearGradient id="table" x1="306" y1="168" x2="367" y2="351" gradientUnits="userSpaceOnUse"><stop stop-color="#fff6df"/><stop offset="1" stop-color="#f1e4c1"/></linearGradient>
+    <linearGradient id="tree" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#a4c699"/><stop offset="1" stop-color="#659779"/></linearGradient>
+    <filter id="shadow" x="-25%" y="-25%" width="150%" height="160%"><feGaussianBlur stdDeviation="8"/></filter>
+    <g id="flower"><path d="M0 0v15m0-5c-7 0-8-5-8-5s7-1 8 5Z" stroke="#71916a" stroke-width="2.5" stroke-linecap="round"/><path d="M0-8C4-18 13-10 8-5c11 1 7 12 0 9 1 11-11 10-10 2-9 5-13-6-5-9-9-6 0-13 7-5Z" fill="#fffaf0"/><circle r="4" fill="#e5bb69"/></g>
+    <g id="grass" stroke="#819f73" stroke-width="2.5" stroke-linecap="round"><path d="m-5 0-3-5m8 4v-7m5 7 3-4"/></g>
+    <g id="leaf" fill="#fff7e5"><path d="M-9 4C-10-7 0-10 10-8 12 4 1 11-9 4Z"/><path d="m-9 8 13-12" stroke="#8eae86" stroke-width="1.5" stroke-linecap="round"/></g>
+    <g id="puck-green"><ellipse cy="5" rx="16" ry="9" fill="#668573"/><ellipse rx="16" ry="9" fill="#87b49b"/><path d="M-5 1C-6-5 1-6 6-4 5 2 0 5-5 1Z" fill="#e6efcd"/></g>
+    <g id="puck-coral"><ellipse cy="5" rx="16" ry="9" fill="#bc8068"/><ellipse rx="16" ry="9" fill="#e6a88c"/><path d="M-5 1C-6-5 1-6 6-4 5 2 0 5-5 1Z" fill="#ffefd2"/></g>
+  </defs>
+  <ellipse cx="344" cy="426" rx="238" ry="35" fill="#899c77" opacity=".12" filter="url(#shadow)"/>
+  <path d="M83 329c0-74 110-128 253-128 150 0 263 55 263 126v21c0 70-119 108-256 108-144 0-260-51-260-106Z" fill="#c7c3a0"/>
+  <path d="M83 326c0-70 113-125 257-125 145 0 259 55 259 125 0 71-115 113-257 113S83 397 83 326Z" fill="url(#land)"/>
+  <path d="M94 354c38 54 155 75 245 75 98 0 208-26 245-67" stroke="#d5e1b2" stroke-width="3" stroke-linecap="round" opacity=".7"/>
+  <path d="M155 327c48-31 76-42 133-34 82 12 118 87 215 68" stroke="#e7dfb9" stroke-width="38" stroke-linecap="round"/>
+  <use href="#grass" x="145" y="344"/><use href="#grass" x="519" y="297"/><use href="#grass" x="458" y="403"/><use href="#grass" x="283" y="404"/><use href="#grass" x="196" y="387"/><use href="#grass" x="553" y="353"/>
+  <!-- Round trees, with little patches of sunlight. -->
+  <ellipse cx="169" cy="299" rx="51" ry="15" fill="#6b946e" opacity=".22"/>
+  <path d="M163 300 160 194h18l3 106c-5 7-13 8-18 0Z" fill="#b7976a"/>
+  <path d="m169 249-19-21m22-2 18-17" stroke="#a28660" stroke-width="5" stroke-linecap="round"/>
+  <path d="M110 208c-12-17-4-38 6-45-3-25 16-42 35-43 15-23 44-18 54 4 24 3 37 23 29 43 20 22 9 47-14 54-8 25-45 32-61 14-26 11-46 0-49-27Z" fill="url(#tree)"/>
+  <path d="M125 171c-2-22 17-36 33-33 13-19 34-15 43-3" stroke="#c1d6aa" stroke-width="9" stroke-linecap="round" opacity=".65"/>
+  <ellipse cx="152" cy="189" rx="8" ry="5" fill="#c3d8a7" transform="rotate(-25 152 189)"/><ellipse cx="201" cy="208" rx="7" ry="4" fill="#b2cea1" transform="rotate(25 201 208)"/>
+  <ellipse cx="508" cy="284" rx="44" ry="13" fill="#6b946e" opacity=".2"/>
+  <path d="m504 280 1-91h15l-3 94c-3 5-10 4-13-3Z" fill="#b7976a"/>
+  <path d="m511 235 15-18" stroke="#a28660" stroke-width="4" stroke-linecap="round"/>
+  <path d="M466 211c-17-18-8-39 3-46-3-23 14-35 29-36 14-19 41-14 48 7 22 1 32 21 25 37 13 19 6 42-14 46-14 19-33 20-46 8-19 8-38 3-45-16Z" fill="#89ae87"/>
+  <path d="M482 168c-2-13 10-21 22-20 11-17 27-10 30-2" stroke="#b6d09f" stroke-width="8" stroke-linecap="round"/>
+  <!-- A small wooden game table, drawn in an oblique projection. -->
+  <ellipse cx="343" cy="345" rx="135" ry="44" fill="#5e7d62" opacity=".18" filter="url(#shadow)"/>
+  <path d="m245 287 3 61 15 7 2-54m142 2-2 58 14-6 8-69" stroke="#ad8e64" stroke-width="10" stroke-linecap="round"/>
+  <path d="m267 153 165 47c11 3 16 10 12 20l-59 153c-3 9-13 13-24 10l-163-48c-10-3-14-11-10-20l58-150c3-10 10-15 21-12Z" fill="#b39363"/>
+  <path d="m267 141 165 48c11 3 16 10 12 20l-59 153c-3 9-13 13-24 10l-163-48c-10-3-14-11-10-20l58-150c3-10 10-15 21-13Z" fill="url(#wood)" stroke="#f6e1b6" stroke-width="3"/>
+  <path d="m267 158 158 46-58 150-158-46 58-150Z" fill="#c2a77b"/>
+  <path d="m271 164 149 43-55 142-149-44 55-141Z" fill="url(#table)"/>
+  <path d="m240 243 62 18m25 7 64 19" stroke="#bc9c6e" stroke-width="13"/>
+  <path d="m240 237 62 18m25 7 64 19" stroke="#efd4a2" stroke-width="12" stroke-linecap="round"/>
+  <path d="m262 188 145 42m-180 57 144 42" stroke="#827954" stroke-width="3.5" stroke-linecap="round"/>
+  <path d="m262 189 145 42m-180 57 144 42" stroke="#b5a87c" stroke-width="1.2" stroke-linecap="round"/>
+  <ellipse cx="334" cy="223" rx="23" ry="17" transform="rotate(17 334 223)" stroke="#93b092" stroke-width="1.5" stroke-dasharray="3 4"/>
+  <ellipse cx="293" cy="303" rx="23" ry="17" transform="rotate(17 293 303)" stroke="#c7ae81" stroke-width="1.5" stroke-dasharray="3 4"/>
+  <use href="#leaf" transform="translate(335 222) scale(.8) rotate(16)"/>
+  <use href="#leaf" transform="translate(294 301) scale(.8) rotate(16)"/>
+  <use href="#puck-green" x="295" y="208"/><use href="#puck-coral" x="372" y="229"/>
+  <use href="#puck-green" x="335" y="327"/><use href="#puck-coral" x="254" y="294"/><use href="#puck-coral" x="293" y="279"/>
+  <path d="m252 170-13 35m-9 26-20 51m192-39-17 43m-4 54-15 19m-145-37 31 9" stroke="#c19c65" stroke-width="1.6" stroke-linecap="round" opacity=".5"/>
+  <circle cx="258" cy="155" r="2" fill="#b59565"/><circle cx="432" cy="202" r="2" fill="#b59565"/><circle cx="199" cy="312" r="2" fill="#b59565"/><circle cx="374" cy="363" r="2" fill="#b59565"/>
+  <!-- Island garden. -->
+  <use href="#flower" transform="translate(141 312) scale(.85)"/><use href="#flower" transform="translate(460 347) scale(1.1)"/><use href="#flower" transform="translate(482 365) scale(.75)"/>
+  <use href="#flower" transform="translate(220 371) scale(.7)"/><use href="#flower" transform="translate(537 315) scale(.65)"/>
+  <path d="M437 305c-12-7-8-19 2-20 0-14 15-16 20-7 11-6 21 4 16 14 9 10 0 18-11 15Z" fill="#769d7b"/>
+  <path d="m449 301 1-13m1 9 8-6" stroke="#c6d8ac" stroke-width="2" stroke-linecap="round"/>
+  <ellipse cx="127" cy="375" rx="11" ry="6" fill="#e1d9bb" transform="rotate(-20 127 375)"/><ellipse cx="514" cy="389" rx="8" ry="5" fill="#e1d9bb"/>
+  <path d="M235 91c6-4 12-3 16 3 6-4 12-3 16 2m161 18c5-4 10-3 13 2 4-3 9-2 12 2" stroke="#a6b99b" stroke-width="3" stroke-linecap="round"/>
+  <path d="m91 243 5-11 6 11-6-3-5 3Zm493 3 4-9 5 9-5-2-4 2Z" fill="#adc49c"/>
+</svg>
