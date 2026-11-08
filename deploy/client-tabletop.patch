@@ -114,9 +114,9 @@
                  this.show(`help`);
 +                break;
 +              case `chlx-note`:
-+                this.showDialog(`被你发现了 · Chlx`,
-+                  `广告位招租，快乐免费。Chlx 祝你下一球刚好穿门。`,
-+                  [{ label: `收好纸条`, kind: `wood`, onClick: () => this.show(`menu`) }]);
++                this.showDialog(`Chlx`,
++                  `再玩一局就收工。`,
++                  [{ label: `行`, kind: `wood`, onClick: () => this.show(`menu`) }]);
                  break;
                case `settings`:
                  (this.refreshSettings(), this.show(`settings`));
