@@ -3880,7 +3880,7 @@ var ir = class {
                 break;
               case `chlx-note`:
                 this.showDialog(`被你发现了 · Chlx`,
-                  `广告位招租，快乐免费。Chlx 在桌角留了个签名，祝你下一球刚好穿门。`,
+                  `广告位招租，快乐免费。Chlx 祝你下一球刚好穿门。`,
                   [{ label: `收好纸条`, kind: `wood`, onClick: () => this.show(`menu`) }]);
                 break;
               case `settings`:
@@ -5111,14 +5111,6 @@ function mr() {
       r.closePath(),
       r.fill());
   }
-  r.save();
-  r.translate(a(7.7), o(-13.5));
-  r.rotate(-0.08);
-  r.font = `italic 600 23px "Avenir Next","Segoe UI",sans-serif`;
-  r.textAlign = `right`;
-  r.fillStyle = `rgba(99,114,79,0.6)`;
-  r.fillText(`Chlx`, 0, 0);
-  r.restore();
   r.fillStyle = `rgba(126,149,111,0.38)`;
   for (let t of [-1, 1]) hr(r, 0, o(t * (D + 0.18)) - 1.68, e, 3.36, i);
   let l = (e, t, n, i, a, o) => {

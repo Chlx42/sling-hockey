@@ -92,7 +92,7 @@ node deploy/benchmark-network.mjs # 同轨迹下比较新旧 Schema 增量编码
 
 首页结构在 `client/js/island-ui.mjs`，主题样式在 `client/css/island.css`，本地 SVG 插画与图标在
 `client/assets/`。页面和对局采用奶油纸卡、草地与浅木桌配色，无外部字体或图片依赖。
-首页、加载页和棋盘统一显示“广告位招租”；棋盘角落保留 Chlx 签名，点击首页叶子可翻开小纸条彩蛋。
+首页、加载页和棋盘统一显示“广告位招租”；点击首页叶子可翻开 Chlx 的小纸条彩蛋。
 `deploy/client-island.patch` 保存生成客户端中的主题入口与渲染调整，构建脚本会在物理补丁后自动应用；
 修改 `game.mjs` 的主题部分时需同步该补丁，避免重建丢失。
 
