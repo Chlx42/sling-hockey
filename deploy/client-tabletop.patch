@@ -1,0 +1,237 @@
+--- a/client/js/game.mjs
++++ b/client/js/game.mjs
+@@ -5,7 +5,8 @@
+ // 重建：python3 deploy/build-game.py
+ import * as T3 from '../vendor/three-orig.js';
+ import { islandMenu } from './island-ui.mjs';
+-import { LocalPrediction } from './prediction.mjs?v=3';
++import { LocalPrediction } from './prediction.mjs?v=4';
++import { MaterialAudio } from './material-audio.mjs?v=1';
+ import { n as e, t } from '../vendor/colyseus-orig.js';
+ import * as n from '@dimforge/rapier2d-compat';
+ await n.init();
+@@ -2304,7 +2305,7 @@
+           onShoot: (e) => {
+             let t = this.engine.shoot(0, e);
+             t.ok
+-              ? (r.buzz(12 + Math.round(t.shot.power * 16)),
++              ? (r.buzz(5 + Math.round(t.shot.power * 7)),
+                 this.guide?.finish())
+               : (this.engine.drop(0, e.px, e.py),
+                 i.toast(
+@@ -2818,7 +2819,7 @@
+           if (predicted) a.launch(t.power, zn(i, e.px, e.py));
+           (this.room.send(`shoot`, { ...e, seq }),
+             (this.released = { aim: { ...t }, seq, at: performance.now() }),
+-            a.buzz(12 + Math.round(t.power * 16)),
++            a.buzz(5 + Math.round(t.power * 7)),
+             this.guide.finish(),
+             this.hinted || ((this.hinted = !0), o.hint(null)));
+         },
+@@ -2947,6 +2948,7 @@
+               a: Number.isFinite(e.a) ? e.a : 0,
+               color: e.c,
+               vx: e.vx, vy: e.vy, av: e.av,
++              bandSide: e.bandSide, bandTangent: e.bandTangent,
+               launchStep: e.launchStep, launchCx: e.launchCx,
+               launchPx: e.launchPx, launchPy: e.launchPy, launchSide: e.launchSide,
+               held: e.held === 0 || e.held === 1 ? e.held : void 0,
+@@ -4703,6 +4705,7 @@
+     ctx = null;
+     master = null;
+     noise = null;
++    materials = null;
+     last = new Map();
+     voices = [];
+     _enabled = !0;
+@@ -4725,6 +4728,7 @@
+           o = a.getChannelData(0);
+         for (let e = 0; e < i; e++) o[e] = Math.random() * 2 - 1;
+         ((this.ctx = t), (this.master = r), (this.noise = a));
++        this.materials = new MaterialAudio(t, r);
+       }
+       this.ctx.state === `suspended` && this.ctx.resume();
+     }
+@@ -4794,79 +4798,26 @@
+         l.start(t),
+         l.stop(t + a + 0.02));
+     }
+-    hit(e, t, n = 0) {
+-      let r = this.ready();
+-      if (!r) return;
+-      let i = Math.min(1, (Math.max(0, t) / 26) ** 0.8);
+-      if (i < 0.04 || !this.allow(e, e === `puck` ? 28 : 40)) return;
+-      let a = r.currentTime + 0.005,
+-        o = this.out(0.25 + 0.75 * i, n),
+-        s = 0.92 + Math.random() * 0.16;
+-      switch (e) {
+-        case `puck`:
+-          (this.noiseBurst(
+-            o,
+-            a,
+-            `bandpass`,
+-            2200 * s,
+-            1.7,
+-            0.022,
+-            0.9 * i + 0.1,
+-          ),
+-            this.tone(o, a, `sine`, 380 * s, 240 * s, 0.055, 0.4 * i + 0.05),
+-            this.tone(o, a, `sine`, 1700 * s, 1200 * s, 0.028, 0.2 * i));
+-          break;
+-        case `wall`:
+-          (this.noiseBurst(o, a, `bandpass`, 950 * s, 1.4, 0.045, 0.8 * i + 0.1),
+-            this.tone(o, a, `sine`, 300 * s, 180 * s, 0.065, 0.5 * i + 0.05));
+-          break;
+-        case `divider`:
+-          (this.noiseBurst(
+-            o,
+-            a,
+-            `bandpass`,
+-            1250 * s,
+-            1.6,
+-            0.035,
+-            0.8 * i + 0.1,
+-          ),
+-            this.tone(o, a, `sine`, 560 * s, 360 * s, 0.06, 0.45 * i + 0.05));
+-          break;
+-        case `band`:
+-          (this.noiseBurst(o, a, `lowpass`, 700, 0.8, 0.07, 0.6 * i + 0.1),
+-            this.tone(o, a, `sine`, 160, 95, 0.11, 0.55 * i + 0.05));
+-      }
+-    }
+-    launch(e, t = 0) {
+-      let n = this.ready();
+-      if (!n || !this.allow(`launch`, 60)) return;
+-      let r = n.currentTime + 0.004,
+-        i = this.out(0.5 + 0.5 * e, t);
+-      (this.noiseBurst(i, r, `highpass`, 1800, 0.7, 0.03, 0.6 + 0.3 * e),
+-        this.tone(i, r, `triangle`, 210 + e * 100, 90, 0.1 + e * 0.05, 0.5),
+-        this.tone(i, r + 0.005, `sine`, 120 + e * 40, 65, 0.12, 0.35));
+-    }
+-    stretch(e) {
+-      let t = this.ready();
+-      if (!t || !this.allow(`stretch`, 45)) return;
+-      let n = t.currentTime + 0.002,
+-        r = this.out(0.12 + e * 0.18, 0);
+-      this.noiseBurst(r, n, `bandpass`, 500 + e * 1500, 6, 0.04, 0.5);
++    hit(kind, speed, pan = 0) {
++      if (!this.ready() || speed < 0.6 || !this.allow(kind, kind === `puck` ? 28 : 40)) return;
++      // 声音跟随接触速度，不再给轻碰也叠一个很大的最低音量。
++      this.materials.play(kind, Math.min(1, speed / 25), pan, this.duck);
++    }
++    launch(power, pan = 0) {
++      if (!this.ready() || !this.allow(`launch`, 60)) return;
++      this.materials.play('launch', 0.3 + 0.7 * power, pan, this.duck);
++    }
++    stretch(power) {
++      if (!this.ready() || !this.allow(`stretch`, 130)) return;
++      this.materials.play('stretch', 0.2 + power * 0.5, 0, this.duck);
+     }
+     select() {
+-      let e = this.ready();
+-      if (!e || !this.allow(`select`, 60)) return;
+-      let t = e.currentTime + 0.003,
+-        n = this.out(0.35, 0);
+-      (this.tone(n, t, `sine`, 980, 900, 0.06, 0.5),
+-        this.noiseBurst(n, t, `bandpass`, 3e3, 2, 0.02, 0.3));
++      if (!this.ready() || !this.allow(`select`, 60)) return;
++      this.materials.play('select', 0.7, 0, this.duck);
+     }
+     putBack() {
+-      let e = this.ready();
+-      if (!e || !this.allow(`put`, 60)) return;
+-      let t = e.currentTime + 0.003,
+-        n = this.out(0.35, 0);
+-      this.tone(n, t, `sine`, 700, 520, 0.09, 0.45);
++      if (!this.ready() || !this.allow(`put`, 60)) return;
++      this.materials.play('put', 0.65, 0, this.duck);
+     }
+     turn(e) {
+       let t = this.ready();
+@@ -5638,10 +5589,10 @@
+     let n = this.f * e;
+     this.vibs.push({
+       cx: n,
+-      amp: 0.08 + t * 0.8,
++      amp: 0.015 + t * 0.18,
+       t: 0,
+-      freq: 9 + t * 4,
+-      decay: 0.3,
++      freq: 14 + t * 4,
++      decay: 0.12,
+     });
+   }
+   update(e, t) {
+@@ -5914,7 +5865,7 @@
+     q = new r();
+     s = new v();
+     time = 0;
+-    static PER = 7;
++    static PER = 3;
+     constructor(t = 12) {
+       let n = t * e.PER,
+         r = new S(0.92, 32).rotateX(-Math.PI / 2);
+@@ -5954,19 +5905,19 @@
+         let i = n[0],
+           a = n[2],
+           o = Math.hypot(i.x - a.x, i.y - a.y) / Math.max(0.001, i.t - a.t);
+-        if (o < 11) continue;
+-        let s = Math.min(1, (o - 11) / 18),
++        if (o < 22) continue;
++        let s = Math.min(1, (o - 22) / 12),
+           c = t.color === 0;
+         for (let t = 1; t <= e.PER && t < n.length; t++) {
+           let i = n[t];
+-          if (this.time - i.t > 0.12) break;
++          if (this.time - i.t > 0.05) break;
+           let a = 1 - t / (e.PER + 1);
+           Q(i.x, i.y, 0.02 + t * 0.001, this.p);
+           let o = 0.98 - t * 0.04;
+           (this.s.set(o, 1, o),
+             this.m.compose(this.p, this.q, this.s),
+             this.mesh.setMatrixAt(r, this.m),
+-            (this.alpha[r] = 0.32 * a * s),
++            (this.alpha[r] = 0.055 * a * s),
+             (this.tint[r * 3] = c ? 0.12 : 0.98),
+             (this.tint[r * 3 + 1] = c ? 0.1 : 0.88),
+             (this.tint[r * 3 + 2] = c ? 0.09 : 0.68),
+@@ -6270,32 +6221,13 @@
+         y: ((1 - r.y) / 2) * this.height,
+       };
+     }
+-    impact(e, t, n, r) {
+-      if (this.effectsOn) {
+-        if (e === `puck` && r > 6) {
+-          let e = Math.min(14, Math.round(r / 2.5));
+-          if (r > 13) this.rings.spawn(t, n, 16773572, 1.2 + Math.min(1, r / MAX_SHOT_SPEED) * 0.7, 0.16);
+-          this.sparks.emit(t, n, X * 0.5, e, {
+-            color: 16769184,
+-            speed: 2 + r * 0.12,
+-            up: 1.4,
+-            life: 0.18,
+-            size: 0.18,
+-            gravity: 10,
+-          });
+-        } else if ((e === `wall` || e === `divider`) && r > 9) {
+-          let e = Math.min(10, Math.round(r / 3));
+-          this.sparks.emit(t, n, 0.25, e, {
+-            color: 14268554,
+-            speed: 1.6,
+-            up: 1.2,
+-            life: 0.22,
+-            size: 0.2,
+-            gravity: 8,
+-            spread: 0.5,
+-          });
+-        }
+-      }
++    impact(kind, x, y, speed) {
++      // 木质接触仅保留极短、少量的尘点，不出现火花或冲击波。
++      if (!this.effectsOn || speed < 18 || kind === `band`) return;
++      this.sparks.emit(x, y, 0.18, Math.min(3, Math.floor(speed / 9)), {
++        color: 14603700, speed: 0.45, up: 0.35, life: 0.12,
++        size: 0.09, gravity: 8, spread: 0.25,
++      });
+     }
+     shake(e) {
+       this.shakes.set(e, 0.32);

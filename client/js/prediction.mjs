@@ -29,7 +29,8 @@ export class LocalPrediction {
 
   receive(pucks, time, phase = 'playing', acknowledgements = {}) {
     this.enabled = pucks.length > 0 && pucks.every((p) =>
-      [p.x, p.y, p.a, p.vx, p.vy, p.av].every(Number.isFinite));
+      [p.x, p.y, p.a, p.vx, p.vy, p.av, p.bandTangent].every(Number.isFinite) &&
+      [-1, 0, 1].includes(p.bandSide));
     if (!this.enabled) {
       this.clear();
       return;

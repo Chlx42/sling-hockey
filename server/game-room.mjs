@@ -331,6 +331,9 @@ export class GameRoom extends Room {
       dst.launchPx = launching ? quantize(src.launchPx) : 0;
       dst.launchPy = launching ? quantize(src.launchPy) : 0;
       dst.launchSide = launching ? src.launchSide : -1;
+      dst.bandSide = src.held === undefined ? src.bandSide : -1;
+      // 切向形变决定接触力，保留 float32 精度，避免每次恢复累积毫米取整误差。
+      dst.bandTangent = dst.bandSide >= 0 ? src.bandTangent : 0;
     }
   }
 }

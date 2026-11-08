@@ -49,7 +49,7 @@ game = header + "\n" + engine_body + "\n" + patched + "\n"
 with tempfile.TemporaryDirectory(prefix="sling-build-") as directory:
     target = Path(directory) / "game.mjs"
     target.write_text(game)
-    for patch in ("client-performance.patch", "client-colyseus.patch", "client-physics.patch", "client-island.patch"):
+    for patch in ("client-performance.patch", "client-colyseus.patch", "client-physics.patch", "client-island.patch", "client-tabletop.patch"):
         subprocess.run(
             ["patch", "--batch", "--forward", "--fuzz=0", str(target), f"{ROOT}/deploy/{patch}"],
             check=True,

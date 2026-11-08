@@ -29,6 +29,8 @@ test('30Hz 房间调度保留 120Hz 固定物理与真实计时', (t) => {
 
 test('网络快照包含量化运动与弹射进度，动态 Schema 完整解码', (t) => {
   const r = room(t), shot = ut(0, 2, 0, 0.12, 3.5);
+  // 本地直接推进模拟，不等待墙钟；锚点应位于过去，不能制造未来快照。
+  r.physicsEpoch = Date.now() - 100;
   assert.ok(r.engine.grab(0, 2).ok);
   assert.ok(r.engine.shoot(0, shot).ok);
   r.tick(SIMULATION_INTERVAL_MS);
@@ -46,6 +48,10 @@ test('网络快照包含量化运动与弹射进度，动态 Schema 完整解码
   assert.equal(actual.launchSide, 0);
   assert.ok(actual.launchStep >= 0);
   assert.ok(actual.vy > 0);
+  assert.equal(actual.bandSide, 0);
+  assert.ok(Math.abs(actual.bandTangent) > 0.001);
+  assert.ok(Math.abs(actual.bandTangent - expected.bandTangent) < 1e-6,
+    '带内切向形变必须随 Schema 保存，避免恢复后改变接触力');
 });
 
 test('等待与结算不发送空时间戳补丁，玩家状态仍正常同步', (t) => {

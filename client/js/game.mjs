@@ -5,7 +5,8 @@
 // 重建：python3 deploy/build-game.py
 import * as T3 from '../vendor/three-orig.js';
 import { islandMenu } from './island-ui.mjs';
-import { LocalPrediction } from './prediction.mjs?v=3';
+import { LocalPrediction } from './prediction.mjs?v=4';
+import { MaterialAudio } from './material-audio.mjs?v=1';
 import { n as e, t } from '../vendor/colyseus-orig.js';
 import * as n from '@dimforge/rapier2d-compat';
 await n.init();
@@ -18,25 +19,24 @@ var T = 9.5,
   be = 11.5,
   xe = 0.12,
   Se = 10.5,
-  Ce = 0.25,
-  we = 4800,
-  Te = 0.25,
   O = 3.9,
   Ee = 0.4,
   Oe = (68 * Math.PI) / 180,
-  ke = 1.08,
-  MAX_SHOT_SPEED = 44,
-  Ae = Math.PI,
+  MAX_SHOT_SPEED = 28,
   // 桌面接触统一处理滑动与自旋，避免再叠加独立的速度阻尼。
   je = 0,
   Me = 0,
-  TABLE_DRAG = 6,
+  TABLE_DRAG = 8.5,
+  BAND_STIFFNESS = 94,
+  BAND_DAMPING = 2.8,
+  BAND_TANGENT_STIFFNESS = 94,
+  BAND_FRICTION = 0.25,
   DISK_INERTIA = 0.5, // I / m，半径为 1 的均匀圆盘。
   FRICTION_RADIUS = 2 / 3,
   MAX_PREVIEW_STEPS = 120,
-  Ne = 0.88,
-  Pe = 0.78,
-  Fe = 0.72,
+  Ne = 0.62,
+  Pe = 0.42,
+  Fe = 0.35,
   Ie = 0.14,
   Le = 0.22,
   k = 1 / 120;
@@ -91,84 +91,34 @@ function Ve(e, t) {
     Math.abs(t) <= 14.55
   );
 }
-var I = T,
-  L = 1,
-  He = -be,
-  Ue = (2 * I) / (1 + Ce);
-function Ke(e) {
-  return e === 0 ? 1 : -1;
+const L = 1;
+function bandSide(y) {
+  return y < M(0) ? 0 : y > M(1) ? 1 : -1;
 }
-function qe(e) {
-  return e - L < He;
-}
-var R = { uLx: 0, uLy: 0, uRx: 0, uRy: 0, lenL: 0, lenR: 0, phi: 0 };
-function Ye(e, t, n) {
-  let r = e + I,
-    i = t - He,
-    a = Math.max(Math.hypot(r, i), L * 1.0001),
-    o = Math.sqrt(a * a - L * L),
-    s = L / a,
-    c = o / a;
-  ((r /= a), (i /= a));
-  let l = r * c + i * s,
-    u = -r * s + i * c,
-    d = -I + l * o,
-    f = He + u * o;
-  ((n.uLx = -l),
-    (n.uLy = -u),
-    (r = e - I),
-    (i = t - He),
-    (a = Math.max(Math.hypot(r, i), L * 1.0001)));
-  let p = Math.sqrt(a * a - L * L);
-  ((s = L / a), (c = p / a), (r /= a), (i /= a));
-  let m = r * c - i * s,
-    h = r * s + i * c,
-    g = I + m * p,
-    _ = He + h * p;
-  ((n.uRx = -m), (n.uRy = -h));
-  let v = (d - e) / L,
-    y = (f - t) / L,
-    b = (g - e) / L,
-    x = (_ - t) / L,
-    S = Math.max(0, Math.atan2(v * x - y * b, v * b + y * x));
-  ((n.phi = S), (n.lenL = o + (L * S) / 2), (n.lenR = p + (L * S) / 2));
-}
-// 回撞带近似为可滑移的等张力橡皮带。受力只依赖当前位置，
-// 对应势能 we/(2*Ue)*(总带长-Ue)^2，快照恢复无需隐藏的带长历史。
-function $e(side, x, y, vx, vy, contact, out) {
-  const sign = Ke(side);
-  if (!qe(sign * y)) return ((contact.active = false), false);
-  contact.active = true;
-  Ye(sign * x, sign * y, R);
-  const tension = we * Math.max(0, (R.lenL + R.lenR) / Ue - 1);
-  let ax = sign * tension * (R.uLx + R.uRx) / Ae;
-  let ay = sign * tension * (R.uLy + R.uRy) / Ae;
-  const acceleration = Math.hypot(ax, ay);
-  if (acceleration > 1e-9) {
-    const nx = ax / acceleration, ny = ay / acceleration;
-    const incoming = vx * nx + vy * ny;
-    // 橡胶压入时耗散能量；阻尼冲量本身不能把速度反向弹出。
-    if (incoming < 0) {
-      const damping = Math.min(-12 * incoming / Ae, -incoming / k);
-      ax += damping * nx;
-      ay += damping * ny;
-    }
-  }
-  out.ax = ax;
-  out.ay = ay;
-  return true;
-}
-function bandFriction(motion, ax, ay) {
-  const acceleration = Math.hypot(ax, ay);
-  if (acceleration < 1e-9) return;
-  const tx = -ay / acceleration, ty = ax / acceleration;
-  // 接触点位于受力法线反向的球缘，切向滑速包含自旋。
-  const slip = motion.x * tx + motion.y * ty - L * motion.w;
-  const limit = Te * acceleration * k;
-  const impulse = F(-slip / (1 + L * L / DISK_INERTIA), -limit, limit);
-  motion.x += impulse * tx;
-  motion.y += impulse * ty;
-  motion.w -= L * impulse / DISK_INERTIA;
+// 主动拉带与被动回撞共用同一接触弹性近似。d 是法向压缩，q 是切向
+// 弹性形变；单位质量储能为 (Kn*d² + Kt*q²)/2，不按发射/回撞切换刚度。
+function bandImpulse(motion, y, contact) {
+  const sign = A(contact.side), depth = -sign * (y - M(contact.side));
+  if (depth <= 0) return;
+  const normalVelocity = sign * motion.y;
+  // 隐式弹簧/阻尼同时耗散压入与释放能量；单向接触不能吸住离开的球。
+  const normal = Math.max(0, (BAND_STIFFNESS * depth -
+    (BAND_DAMPING + BAND_STIFFNESS * k) * normalVelocity) /
+    (1 + BAND_DAMPING * k + BAND_STIFFNESS * k * k));
+  motion.y += sign * normal * k;
+  // 绕带两侧张力的横向合力通过圆心；只有后缘滑移摩擦产生转矩。
+  // 联立隐式弹簧与 Coulomb 摩擦，使 q 的储能和最终速度使用同一状态。
+  const tangent = -sign, slip = tangent * motion.x - L * motion.w;
+  const u = tangent * motion.x, denominator = 1 + BAND_TANGENT_STIFFNESS * k * k;
+  const elastic = -BAND_TANGENT_STIFFNESS * k * (contact.tangent + k * u) / denominator;
+  const coupling = BAND_TANGENT_STIFFNESS * k * k / denominator;
+  const trial = -(slip + elastic) / (1 + L * L / DISK_INERTIA - coupling);
+  const limit = BAND_FRICTION * normal * k;
+  const friction = F(trial, -limit, limit);
+  const impulse = elastic - coupling * friction + friction;
+  motion.x += tangent * impulse;
+  motion.w -= L * friction / DISK_INERTIA;
+  contact.tangent += k * (u + impulse);
 }
 function tableFriction(motion) {
   // 均匀圆盘接触的椭圆近似：纯平移减速度为 TABLE_DRAG，
@@ -185,45 +135,47 @@ function tableFriction(motion) {
     motion.x = motion.y = motion.w = 0;
 }
 function launchMotion(plan, limit = MAX_PREVIEW_STEPS) {
-  let distance = 0, speed = 0, steps = 0;
-  // 与实际物理相同的半隐式固定步长；只计算无障碍的离带点，
-  // 不创建额外 Rapier 世界，AI 的碰撞评估仍使用完整物理。
-  while (steps < limit && distance < plan.dist) {
-    speed += plan.omega ** 2 * (plan.dist - distance) * k;
-    speed = Math.max(0, speed - TABLE_DRAG * k);
-    distance += speed * k;
+  let x = plan.px, y = plan.py, steps = 0;
+  const motion = { x: 0, y: 0, w: 0 };
+  const contact = { side: plan.side, tangent: -A(plan.side) * (plan.px - plan.cx) };
+  // 与实际发射共用受力、滑转摩擦和固定步长，包含斜拉产生的旋转；
+  // 有限的纯数值预览不创建 WASM 世界，AI 碰撞候选仍使用完整物理。
+  while (steps < limit && bandSide(y) === plan.side) {
+    const previousX = x, previousTangent = contact.tangent;
+    bandImpulse(motion, y, contact);
+    tableFriction(motion);
+    x += motion.x * k;
+    y += motion.y * k;
+    contact.tangent = previousTangent - A(plan.side) * (x - previousX);
     steps++;
+    if (motion.x === 0 && motion.y === 0 && motion.w === 0) break;
   }
-  return { distance, speed, steps };
+  return { x, y, vx: motion.x, vy: motion.y, av: motion.w, steps,
+    speed: Math.hypot(motion.x, motion.y), released: bandSide(y) !== plan.side };
 }
-function et(e) {
-  return MAX_SHOT_SPEED * Math.min(1, Math.max(0, e) / O) ** +ke;
+function et(pull) {
+  return rt(0, 0, 0, M(0) - F(pull, 0, O)).speed;
 }
 function tt(side, cx, px, py, preview = true) {
   const dy = M(side) - py, dx = cx - px;
-  const pull = Math.hypot(dx, dy), speed = et(pull);
-  if (A(side) * dy <= 1e-6 || speed < 1e-6) return null;
-  const plan = { px, py, dx: dx / pull, dy: dy / pull, pull, dist: pull,
-    speed, omega: speed / pull };
+  const pull = Math.hypot(dx, dy);
+  if (A(side) * dy <= 1e-6) return null;
+  const plan = { side, cx, px, py, dx: dx / pull, dy: dy / pull, pull, dist: pull };
   if (!preview) return plan;
   const exit = launchMotion(plan);
-  return Object.assign(plan, { steps: exit.steps, duration: exit.steps * k,
-    exitDistance: exit.distance, exitSpeed: exit.speed });
+  return Object.assign(plan, { steps: exit.steps, duration: exit.steps * k, exit,
+    exitDistance: Math.hypot(exit.x - px, exit.y - py), exitSpeed: exit.speed, speed: exit.speed });
 }
 function nt(plan, steps) {
-  return launchMotion(plan, steps).distance;
+  const exit = launchMotion(plan, steps);
+  return Math.hypot(exit.x - plan.px, exit.y - plan.py);
 }
 function rt(side, cx, px, py) {
   const plan = tt(side, cx, px, py);
   if (!plan) return { ok: false, x: px, y: py, vx: 0, vy: 0, speed: 0, steps: 0 };
   return {
-    ok: plan.exitDistance >= plan.dist && plan.exitSpeed >= 3 && A(side) * plan.dy > 0.2,
-    x: px + plan.dx * plan.exitDistance,
-    y: py + plan.dy * plan.exitDistance,
-    vx: plan.dx * plan.exitSpeed,
-    vy: plan.dy * plan.exitSpeed,
-    speed: plan.exitSpeed,
-    steps: plan.steps,
+    ...plan.exit,
+    ok: plan.exit.released && plan.exit.speed >= 3 && A(side) * plan.exit.vy > 0.2 * plan.exit.speed,
   };
 }
 var it = T - 1,
@@ -303,7 +255,7 @@ function ct(e, t, n, r, i) {
     px: o.x,
     py: o.y,
     pull: l,
-    power: Math.min(1, u / MAX_SHOT_SPEED),
+    power: Math.min(1, l / O),
     dirX: u > 1e-6 ? c.vx / u : 0,
     dirY: u > 1e-6 ? c.vy / u : A(e),
     speed: u,
@@ -334,7 +286,7 @@ var pt = 1,
   ht = (e, t) => ((e & 65535) << 16) | (t & 65535),
   gt = ht(pt, 3),
   _t = 3,
-  vt = 0.6,
+  vt = 0,
   yt = be - 1 - 0.05,
   xt = class {
     world = null;
@@ -343,7 +295,6 @@ var pt = 1,
     tags = new Map();
     pre = new Float64Array();
     scratch = { x: 0, y: 0 };
-    acc = { ax: 0, ay: 0 };
     motion = { x: 0, y: 0, w: 0 };
     constructor(e) {
       this.reset(e);
@@ -443,7 +394,7 @@ var pt = 1,
           color: t.color,
           body: i,
           collider: a,
-          band: [{ active: false }, { active: false }],
+          band: { side: -1, tangent: 0, integrated: false, previousX: 0, previousTangent: 0 },
           launch: null,
           quietSteps: 0,
         }
@@ -461,11 +412,14 @@ var pt = 1,
         a.body.setTranslation({ x: n, y: r }, !0),
         a.body.setLinvel({ x: 0, y: 0 }, !0),
         a.body.setAngvel(0, !0),
-        (a.band[0].active = false),
-        (a.band[1].active = false));
+        (a.band.side = -1),
+        (a.band.tangent = 0));
       let o = tt(i, t, n, r, false);
-      o &&
-        (a.launch = { plan: o, step: 0, cx: t, side: i });
+      if (o) {
+        a.launch = { plan: o, step: 0, cx: t, side: i };
+        a.band.side = i;
+        a.band.tangent = -A(i) * (n - t);
+      }
     }
     endLaunch(e) {
       e.launch = null;
@@ -481,8 +435,8 @@ var pt = 1,
         t.body.setLinvel({ x: 0, y: 0 }, !1),
         t.body.setAngvel(0, !1),
         t.body.setEnabled(!1),
-        (t.band[0].active = false),
-        (t.band[1].active = false));
+        (t.band.side = -1),
+        (t.band.tangent = 0));
     }
     place(e, t, n) {
       let r = this.find(e);
@@ -493,8 +447,8 @@ var pt = 1,
         r.body.setTranslation({ x: t, y: n }, !0),
         r.body.setLinvel({ x: 0, y: 0 }, !0),
         r.body.setAngvel(0, !0),
-        (r.band[0].active = false),
-        (r.band[1].active = false));
+        (r.band.side = -1),
+        (r.band.tangent = 0));
     }
     restore(pucks) {
       // 网络校正复用已有 WASM 世界，避免每个快照重建碰撞体。
@@ -503,18 +457,29 @@ var pt = 1,
         if (!entry) continue;
         this.endLaunch(entry);
         entry.quietSteps = 0;
-        entry.band[0].active = entry.band[1].active = false;
+        entry.band.side = -1;
+        entry.band.tangent = 0;
         const body = entry.body;
         body.setEnabled(!(puck.held >= 0));
         body.setTranslation({ x: puck.x, y: puck.y }, true);
         body.setRotation(puck.a, true);
         body.setLinvel({ x: puck.vx ?? 0, y: puck.vy ?? 0 }, true);
         body.setAngvel(puck.av ?? 0, true);
+        if (!(puck.held >= 0) && (puck.bandSide === 0 || puck.bandSide === 1) &&
+            puck.bandSide === bandSide(puck.y) && Number.isFinite(puck.bandTangent)) {
+          entry.band.side = puck.bandSide;
+          entry.band.tangent = puck.bandTangent;
+        }
         if (puck.launchStep >= 0 && !(puck.held >= 0)) {
           const plan = tt(puck.launchSide, puck.launchCx, puck.launchPx, puck.launchPy, false);
           if (plan && lt(puck.launchSide, puck.y)) {
             entry.launch = { plan, step: puck.launchStep,
               cx: puck.launchCx, side: puck.launchSide };
+            // 旧快照无切向状态时仅作兼容；新协议始终同步完整接触形变。
+            if (entry.band.side < 0) {
+              entry.band.side = puck.launchSide;
+              entry.band.tangent = -A(puck.launchSide) * (puck.x - puck.launchCx);
+            }
           }
         }
         if (!entry.launch && !puck.vx && !puck.vy && !puck.av && Math.abs(puck.y) < yt)
@@ -528,40 +493,34 @@ var pt = 1,
       if (!this.bodies.some(({ body, launch }) => body.isEnabled() &&
           (launch || !body.isSleeping())))
         return false;
-      const motion = this.motion, acceleration = this.acc;
+      const motion = this.motion;
       for (const entry of this.bodies) {
         const body = entry.body;
+        entry.band.integrated = false;
         if (!body.isEnabled() || (body.isSleeping() && !entry.launch)) continue;
         const position = body.translation(), velocity = body.linvel();
         motion.x = velocity.x;
         motion.y = velocity.y;
         motion.w = body.angvel();
-        if (entry.launch && !lt(entry.launch.side, position.y)) this.endLaunch(entry);
-        if (entry.launch) {
-          const launch = entry.launch, stiffness = launch.plan.omega ** 2;
-          // 手松开后只施加当前位置对应的弹簧冲量，碰撞产生的速度和旋转
-          // 都由求解器保留，不再把球强行拉回预设轨迹或补写“满速”。
-          const ax = (launch.cx - position.x) * stiffness;
-          const ay = (M(launch.side) - position.y) * stiffness;
-          motion.x += ax * k;
-          motion.y += ay * k;
-          bandFriction(motion, ax, ay);
-        } else if (Math.abs(position.y) >= yt) {
-          for (let side = 0; side < 2; side++) {
-            const contact = entry.band[side], wasActive = contact.active;
-            if (!$e(side, position.x, position.y, motion.x, motion.y, contact, acceleration)) continue;
-            if (!wasActive && e) {
-              const incoming = -A(side) * motion.y;
-              if (incoming > 0.4) e.push({ k: `band`, x: position.x, y: position.y,
-                v: incoming, s: side, a: entry.id });
-            }
-            motion.x += acceleration.ax * k;
-            motion.y += acceleration.ay * k;
-            bandFriction(motion, acceleration.ax, acceleration.ay);
+        const side = bandSide(position.y);
+        if (entry.launch && side !== entry.launch.side) this.endLaunch(entry);
+        if (entry.band.side !== side) {
+          entry.band.side = side;
+          entry.band.tangent = 0;
+          if (side >= 0 && e) {
+            const incoming = -A(side) * motion.y;
+            if (incoming > 0.4) e.push({ k: `band`, x: position.x, y: position.y,
+              v: incoming, s: side, a: entry.id });
           }
-        } else entry.band[0].active = entry.band[1].active = false;
+        }
+        if (side >= 0) {
+          entry.band.integrated = true;
+          entry.band.previousX = position.x;
+          entry.band.previousTangent = entry.band.tangent;
+          bandImpulse(motion, position.y, entry.band);
+        }
         tableFriction(motion);
-        const elastic = !!entry.launch || entry.band[0].active || entry.band[1].active;
+        const elastic = side >= 0;
         body.setLinvel(motion, elastic);
         body.setAngvel(motion.w, elastic);
       }
@@ -577,6 +536,16 @@ var pt = 1,
       });
       for (const entry of this.bodies) {
         const body = entry.body;
+        if (entry.band.integrated) {
+          // 求解器的接触冲量与桌面摩擦会改变实际滑动，不能用预测位移
+          // 更新储能；快照中的 q 始终跟随本步实际的圆心位移。
+          entry.band.tangent = entry.band.previousTangent - A(entry.band.side) *
+            (body.translation().x - entry.band.previousX);
+        }
+        if (entry.band.side >= 0 && bandSide(body.translation().y) !== entry.band.side) {
+          entry.band.side = -1;
+          entry.band.tangent = 0;
+        }
         if (entry.launch) {
           // step 只标记发射仍在进行，不让长时间堵球导致协议计数溢出。
           entry.launch.step = Math.min(MAX_PREVIEW_STEPS, entry.launch.step + 1);
@@ -585,8 +554,12 @@ var pt = 1,
         if (body.isSleeping() || !body.isEnabled()) continue;
         const velocity = body.linvel();
         // 被桌面静摩擦抵住的轻压带也可休眠；之后的碰撞/抓放/快照会唤醒。
-        if (!entry.launch && velocity.x === 0 && velocity.y === 0 && body.angvel() === 0) {
-          if (++entry.quietSteps >= 12) body.sleep();
+        if (velocity.x === 0 && velocity.y === 0 && body.angvel() === 0) {
+          if (++entry.quietSteps >= 12) {
+            // 堵住或轻拉后静止也可重新抓取；保留接触储能，下一次碰撞再唤醒。
+            this.endLaunch(entry);
+            body.sleep();
+          }
         } else entry.quietSteps = 0;
       }
       return true;
@@ -691,6 +664,8 @@ var pt = 1,
           i.launchPx = launch?.plan.px ?? 0;
           i.launchPy = launch?.plan.py ?? 0;
           i.launchSide = launch?.side ?? -1;
+          i.bandSide = n.band.side;
+          i.bandTangent = n.band.tangent;
         }
       }
       e.length = this.bodies.length;
@@ -1134,6 +1109,8 @@ var Rt = class {
       (r.held = e),
       (r.vx = r.vy = r.av = 0),
       (r.launchStep = -1),
+      (r.bandSide = -1),
+      (r.bandTangent = 0),
       (this.holds[e] = { puckId: t, x: r.x, y: r.y }),
       this.emit({ type: `grab`, side: e, puckId: t }),
       { ok: !0 }
@@ -1160,6 +1137,8 @@ var Rt = class {
       (a.held = void 0),
       (a.vx = a.vy = a.av = 0),
       (a.launchStep = -1),
+      (a.bandSide = -1),
+      (a.bandTangent = 0),
       (this.holds[e] = null),
       this.emit({ type: `drop`, side: e, puckId: a.id, x: i.x, y: i.y }),
       { ok: !0 }
@@ -1274,6 +1253,8 @@ var Rt = class {
         t.launchPx = n.launchPx;
         t.launchPy = n.launchPy;
         t.launchSide = n.launchSide;
+        t.bandSide = n.bandSide;
+        t.bandTangent = n.bandTangent;
       }
       let r = N(t.y),
         i = this.prevSide[e];
@@ -1372,16 +1353,14 @@ var Bt = Math.PI / 180,
   Wt = T - 1,
   Gt = 7;
 function Kt(e, t, n, r) {
-  let i = ut(e, 0, t, n, r),
-    a = rt(e, t, i.px, i.py);
-  if (!a.ok || Math.abs(a.vy) < 1e-6) return null;
-  let o = -a.y / a.vy;
-  return o > 0 ? a.x + a.vx * o : null;
+  const shot = ut(e, 0, t, n, r), aim = ct(e, t, shot.px, shot.py, []);
+  if (!aim.ok || Math.abs(aim.dirY) < 1e-6) return null;
+  const distance = -aim.exitY / aim.dirY;
+  return distance > 0 ? aim.exitX + aim.dirX * distance : null;
 }
 function qt(e, t, n, r) {
-  let i = ut(e, 0, t, n, r),
-    a = rt(e, t, i.px, i.py);
-  return a.ok ? Math.atan2(a.vx, A(e) * a.vy) : null;
+  const shot = ut(e, 0, t, n, r), aim = ct(e, t, shot.px, shot.py, []);
+  return aim.ok ? Math.atan2(aim.dirX, A(e) * aim.dirY) : null;
 }
 function Jt(e, t, n, r) {
   let i = 0,
@@ -2326,7 +2305,7 @@ var Hn = {
           onShoot: (e) => {
             let t = this.engine.shoot(0, e);
             t.ok
-              ? (r.buzz(12 + Math.round(t.shot.power * 16)),
+              ? (r.buzz(5 + Math.round(t.shot.power * 7)),
                 this.guide?.finish())
               : (this.engine.drop(0, e.px, e.py),
                 i.toast(
@@ -2840,7 +2819,7 @@ var Yn = class {
           if (predicted) a.launch(t.power, zn(i, e.px, e.py));
           (this.room.send(`shoot`, { ...e, seq }),
             (this.released = { aim: { ...t }, seq, at: performance.now() }),
-            a.buzz(12 + Math.round(t.power * 16)),
+            a.buzz(5 + Math.round(t.power * 7)),
             this.guide.finish(),
             this.hinted || ((this.hinted = !0), o.hint(null)));
         },
@@ -2969,6 +2948,7 @@ var Yn = class {
               a: Number.isFinite(e.a) ? e.a : 0,
               color: e.c,
               vx: e.vx, vy: e.vy, av: e.av,
+              bandSide: e.bandSide, bandTangent: e.bandTangent,
               launchStep: e.launchStep, launchCx: e.launchCx,
               launchPx: e.launchPx, launchPy: e.launchPy, launchSide: e.launchSide,
               held: e.held === 0 || e.held === 1 ? e.held : void 0,
@@ -4725,6 +4705,7 @@ var ir = class {
     ctx = null;
     master = null;
     noise = null;
+    materials = null;
     last = new Map();
     voices = [];
     _enabled = !0;
@@ -4747,6 +4728,7 @@ var ir = class {
           o = a.getChannelData(0);
         for (let e = 0; e < i; e++) o[e] = Math.random() * 2 - 1;
         ((this.ctx = t), (this.master = r), (this.noise = a));
+        this.materials = new MaterialAudio(t, r);
       }
       this.ctx.state === `suspended` && this.ctx.resume();
     }
@@ -4816,79 +4798,26 @@ var ir = class {
         l.start(t),
         l.stop(t + a + 0.02));
     }
-    hit(e, t, n = 0) {
-      let r = this.ready();
-      if (!r) return;
-      let i = Math.min(1, (Math.max(0, t) / 26) ** 0.8);
-      if (i < 0.04 || !this.allow(e, e === `puck` ? 28 : 40)) return;
-      let a = r.currentTime + 0.005,
-        o = this.out(0.25 + 0.75 * i, n),
-        s = 0.92 + Math.random() * 0.16;
-      switch (e) {
-        case `puck`:
-          (this.noiseBurst(
-            o,
-            a,
-            `bandpass`,
-            2200 * s,
-            1.7,
-            0.022,
-            0.9 * i + 0.1,
-          ),
-            this.tone(o, a, `sine`, 380 * s, 240 * s, 0.055, 0.4 * i + 0.05),
-            this.tone(o, a, `sine`, 1700 * s, 1200 * s, 0.028, 0.2 * i));
-          break;
-        case `wall`:
-          (this.noiseBurst(o, a, `bandpass`, 950 * s, 1.4, 0.045, 0.8 * i + 0.1),
-            this.tone(o, a, `sine`, 300 * s, 180 * s, 0.065, 0.5 * i + 0.05));
-          break;
-        case `divider`:
-          (this.noiseBurst(
-            o,
-            a,
-            `bandpass`,
-            1250 * s,
-            1.6,
-            0.035,
-            0.8 * i + 0.1,
-          ),
-            this.tone(o, a, `sine`, 560 * s, 360 * s, 0.06, 0.45 * i + 0.05));
-          break;
-        case `band`:
-          (this.noiseBurst(o, a, `lowpass`, 700, 0.8, 0.07, 0.6 * i + 0.1),
-            this.tone(o, a, `sine`, 160, 95, 0.11, 0.55 * i + 0.05));
-      }
+    hit(kind, speed, pan = 0) {
+      if (!this.ready() || speed < 0.6 || !this.allow(kind, kind === `puck` ? 28 : 40)) return;
+      // 声音跟随接触速度，不再给轻碰也叠一个很大的最低音量。
+      this.materials.play(kind, Math.min(1, speed / 25), pan, this.duck);
     }
-    launch(e, t = 0) {
-      let n = this.ready();
-      if (!n || !this.allow(`launch`, 60)) return;
-      let r = n.currentTime + 0.004,
-        i = this.out(0.5 + 0.5 * e, t);
-      (this.noiseBurst(i, r, `highpass`, 1800, 0.7, 0.03, 0.6 + 0.3 * e),
-        this.tone(i, r, `triangle`, 210 + e * 100, 90, 0.1 + e * 0.05, 0.5),
-        this.tone(i, r + 0.005, `sine`, 120 + e * 40, 65, 0.12, 0.35));
+    launch(power, pan = 0) {
+      if (!this.ready() || !this.allow(`launch`, 60)) return;
+      this.materials.play('launch', 0.3 + 0.7 * power, pan, this.duck);
     }
-    stretch(e) {
-      let t = this.ready();
-      if (!t || !this.allow(`stretch`, 45)) return;
-      let n = t.currentTime + 0.002,
-        r = this.out(0.12 + e * 0.18, 0);
-      this.noiseBurst(r, n, `bandpass`, 500 + e * 1500, 6, 0.04, 0.5);
+    stretch(power) {
+      if (!this.ready() || !this.allow(`stretch`, 130)) return;
+      this.materials.play('stretch', 0.2 + power * 0.5, 0, this.duck);
     }
     select() {
-      let e = this.ready();
-      if (!e || !this.allow(`select`, 60)) return;
-      let t = e.currentTime + 0.003,
-        n = this.out(0.35, 0);
-      (this.tone(n, t, `sine`, 980, 900, 0.06, 0.5),
-        this.noiseBurst(n, t, `bandpass`, 3e3, 2, 0.02, 0.3));
+      if (!this.ready() || !this.allow(`select`, 60)) return;
+      this.materials.play('select', 0.7, 0, this.duck);
     }
     putBack() {
-      let e = this.ready();
-      if (!e || !this.allow(`put`, 60)) return;
-      let t = e.currentTime + 0.003,
-        n = this.out(0.35, 0);
-      this.tone(n, t, `sine`, 700, 520, 0.09, 0.45);
+      if (!this.ready() || !this.allow(`put`, 60)) return;
+      this.materials.play('put', 0.65, 0, this.duck);
     }
     turn(e) {
       let t = this.ready();
@@ -5660,10 +5589,10 @@ var Ir = class {
     let n = this.f * e;
     this.vibs.push({
       cx: n,
-      amp: 0.08 + t * 0.8,
+      amp: 0.015 + t * 0.18,
       t: 0,
-      freq: 9 + t * 4,
-      decay: 0.3,
+      freq: 14 + t * 4,
+      decay: 0.12,
     });
   }
   update(e, t) {
@@ -5936,7 +5865,7 @@ var Rr = class {
     q = new r();
     s = new v();
     time = 0;
-    static PER = 7;
+    static PER = 3;
     constructor(t = 12) {
       let n = t * e.PER,
         r = new S(0.92, 32).rotateX(-Math.PI / 2);
@@ -5976,19 +5905,19 @@ var Rr = class {
         let i = n[0],
           a = n[2],
           o = Math.hypot(i.x - a.x, i.y - a.y) / Math.max(0.001, i.t - a.t);
-        if (o < 11) continue;
-        let s = Math.min(1, (o - 11) / 18),
+        if (o < 22) continue;
+        let s = Math.min(1, (o - 22) / 12),
           c = t.color === 0;
         for (let t = 1; t <= e.PER && t < n.length; t++) {
           let i = n[t];
-          if (this.time - i.t > 0.12) break;
+          if (this.time - i.t > 0.05) break;
           let a = 1 - t / (e.PER + 1);
           Q(i.x, i.y, 0.02 + t * 0.001, this.p);
           let o = 0.98 - t * 0.04;
           (this.s.set(o, 1, o),
             this.m.compose(this.p, this.q, this.s),
             this.mesh.setMatrixAt(r, this.m),
-            (this.alpha[r] = 0.32 * a * s),
+            (this.alpha[r] = 0.055 * a * s),
             (this.tint[r * 3] = c ? 0.12 : 0.98),
             (this.tint[r * 3 + 1] = c ? 0.1 : 0.88),
             (this.tint[r * 3 + 2] = c ? 0.09 : 0.68),
@@ -6292,32 +6221,13 @@ var Hr = class {
         y: ((1 - r.y) / 2) * this.height,
       };
     }
-    impact(e, t, n, r) {
-      if (this.effectsOn) {
-        if (e === `puck` && r > 6) {
-          let e = Math.min(14, Math.round(r / 2.5));
-          if (r > 13) this.rings.spawn(t, n, 16773572, 1.2 + Math.min(1, r / MAX_SHOT_SPEED) * 0.7, 0.16);
-          this.sparks.emit(t, n, X * 0.5, e, {
-            color: 16769184,
-            speed: 2 + r * 0.12,
-            up: 1.4,
-            life: 0.18,
-            size: 0.18,
-            gravity: 10,
-          });
-        } else if ((e === `wall` || e === `divider`) && r > 9) {
-          let e = Math.min(10, Math.round(r / 3));
-          this.sparks.emit(t, n, 0.25, e, {
-            color: 14268554,
-            speed: 1.6,
-            up: 1.2,
-            life: 0.22,
-            size: 0.2,
-            gravity: 8,
-            spread: 0.5,
-          });
-        }
-      }
+    impact(kind, x, y, speed) {
+      // 木质接触仅保留极短、少量的尘点，不出现火花或冲击波。
+      if (!this.effectsOn || speed < 18 || kind === `band`) return;
+      this.sparks.emit(x, y, 0.18, Math.min(3, Math.floor(speed / 9)), {
+        color: 14603700, speed: 0.45, up: 0.35, life: 0.12,
+        size: 0.09, gravity: 8, spread: 0.25,
+      });
     }
     shake(e) {
       this.shakes.set(e, 0.32);
