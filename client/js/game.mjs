@@ -1018,7 +1018,7 @@ var Rt = class {
   steps = 0;
   scorer = new Ft(this);
   constructor(e = {}) {
-    ((this.matchTime = e.matchTime ?? 180),
+    ((this.matchTime = e.matchTime ?? 60),
       (this.overtimeTime = e.overtime ?? 60),
       (this.pucks = Be()),
       (this.world = new xt(this.pucks)),
@@ -3785,7 +3785,7 @@ var ir = class {
           <li><i>2</i><span><b>实时对战，不分回合</b>：双方随时出手，比谁又快又准。<b>颜色不代表归属</b>，落在你半场的冰球都由你操作。</span></li>
           <li><i>3</i><span>按住自己半场里停下（或慢慢滑动）的冰球，拖向弹力带，压上带子后往后拉，松手发射。一次只能拿一枚。</span></li>
           <li><i>4</i><span>像弹弓一样：正后方拉直射，往右后方拉就往左前方斜射。手指往侧面挪一点，方向就跟着变一点；冰球拉满后手指还能继续往后拉，拉得越远，方向调得越细。拉伸距离决定力度。</span></li>
-          <li><i>5</i><span><b>先把自己半场清空的一方获胜</b>；常规时间 3 分钟，时间到时半场剩余较少的一方获胜。剩余相同进入 60 秒<b>加时赛</b>：双方不显示辅助线，先领先的一方获胜。</span></li>
+          <li><i>5</i><span><b>先把自己半场清空的一方获胜</b>；常规时间 1 分钟，时间到时半场剩余较少的一方获胜。剩余相同进入 60 秒<b>加时赛</b>：双方不显示辅助线，先领先的一方获胜。</span></li>
           <li><i>6</i><span>电脑上按 Esc 或右键可以取消当前瞄准；人机对战中按 Esc 暂停。</span></li>
         </ul>
         <div class="stack" style="margin-top:18px"><button class="btn btn-wood" data-act="back">知道了</button></div>
