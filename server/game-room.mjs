@@ -7,6 +7,7 @@ import * as board from './leaderboard.mjs';
 
 const START_COUNTDOWN = 3;
 const RECONNECT_GRACE = 30;
+const FRIEND_WAIT_RECONNECT_GRACE = 120;
 const SEAT_FAIL_GRACE = 15;
 const FX_TYPES = ['puck', 'wall', 'divider', 'band', 'launch'];
 export const SNAPSHOT_INTERVAL_MS = 100;
@@ -22,7 +23,7 @@ export class GameRoom extends Room {
 
   onCreate({ mode, matchTime, overtime } = {}) {
     this.mode = mode === 'friend' ? 'friend' : 'queue';
-    this.engine = new Rt({ matchTime: matchTime ?? 180, overtime: overtime ?? 60 });
+    this.engine = new Rt({ matchTime: matchTime ?? 60, overtime: overtime ?? 120 });
     this.engine.drainEvents();
     this.phase = 'waiting';
     this.countdown = 0;
@@ -140,23 +141,33 @@ export class GameRoom extends Room {
     ps.connected = true;
     this.state.players.set(client.sessionId, ps);
     this.meta.players.set(client.sessionId, { side, pid: String(pid || ''), client, state: ps, alive: true, leftAt: null });
-    if (this.meta.players.size === 2) this.startStarting();
+    this.startWhenReady();
+  }
+
+  startWhenReady() {
+    if (this.phase === 'waiting' && this.meta.players.size === 2 &&
+        [...this.meta.players.values()].every((p) => p.alive)) this.startStarting();
   }
 
   async onDrop(client) {
     const p = this.meta.players.get(client.sessionId);
-    if (!p || (this.phase !== 'starting' && this.phase !== 'playing')) return;
+    const waitingForFriend = this.mode === 'friend' && this.phase === 'waiting';
+    if (!p || (!waitingForFriend && this.phase !== 'starting' && this.phase !== 'playing')) return;
     p.alive = false;
     p.leftAt = Date.now();
+    p.reconnectGrace = waitingForFriend ? FRIEND_WAIT_RECONNECT_GRACE : RECONNECT_GRACE;
     p.state.connected = false;
+    p.state.reconnectLeft = p.reconnectGrace;
     this.engine.drop(p.side);
     this.clearAim(p.side);
     try {
-      p.client = await this.allowReconnection(client, RECONNECT_GRACE);
+      // 分享时切到聊天 App 可能挂起连接；保留原席位和邀请链接，仍由框架限时回收。
+      p.client = await this.allowReconnection(client, p.reconnectGrace);
       p.alive = true;
       p.leftAt = null;
       p.state.connected = true;
       p.state.reconnectLeft = 0;
+      this.startWhenReady();
     } catch {
       // Colyseus 在重连失败后调用 onLeave，统一执行判负。
       p.state.reconnectLeft = 0;
@@ -221,8 +232,8 @@ export class GameRoom extends Room {
     dt = Math.min(dt / 1000, 0.1); // 30Hz 调度，仍按引擎固定 120Hz 子步推进；最多补算 100ms。
     // 重连倒计时
     for (const p of this.meta.players.values()) {
-      if (!p.alive && p.leftAt !== null && (this.phase === 'starting' || this.phase === 'playing')) {
-        const left = Math.max(0, Math.ceil((RECONNECT_GRACE * 1000 - (Date.now() - p.leftAt)) / 1000));
+      if (!p.alive && p.leftAt !== null && (this.phase === 'waiting' || this.phase === 'starting' || this.phase === 'playing')) {
+        const left = Math.max(0, Math.ceil(((p.reconnectGrace ?? RECONNECT_GRACE) * 1000 - (Date.now() - p.leftAt)) / 1000));
         if (p.state.reconnectLeft !== left) p.state.reconnectLeft = left;
       }
     }
@@ -331,6 +342,9 @@ export class GameRoom extends Room {
       dst.launchPx = launching ? quantize(src.launchPx) : 0;
       dst.launchPy = launching ? quantize(src.launchPy) : 0;
       dst.launchSide = launching ? src.launchSide : -1;
+      dst.bandSide = src.held === undefined ? src.bandSide : -1;
+      // 切向形变决定接触力，保留 float32 精度，避免每次恢复累积毫米取整误差。
+      dst.bandTangent = dst.bandSide >= 0 ? src.bandTangent : 0;
     }
   }
 }

@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Encoder, Decoder } from '@colyseus/schema';
 import { GameRoom, SIMULATION_INTERVAL_MS } from '../server/game-room.mjs';
-import { GameState } from '../server/state.mjs';
+import { GameState, PlayerState } from '../server/state.mjs';
 import { Rt, ut, k } from '../engine/index.mjs';
 
 function room(t, phase = 'playing') {
@@ -29,6 +29,8 @@ test('30Hz 房间调度保留 120Hz 固定物理与真实计时', (t) => {
 
 test('网络快照包含量化运动与弹射进度，动态 Schema 完整解码', (t) => {
   const r = room(t), shot = ut(0, 2, 0, 0.12, 3.5);
+  // 本地直接推进模拟，不等待墙钟；锚点应位于过去，不能制造未来快照。
+  r.physicsEpoch = Date.now() - 100;
   assert.ok(r.engine.grab(0, 2).ok);
   assert.ok(r.engine.shoot(0, shot).ok);
   r.tick(SIMULATION_INTERVAL_MS);
@@ -46,6 +48,10 @@ test('网络快照包含量化运动与弹射进度，动态 Schema 完整解码
   assert.equal(actual.launchSide, 0);
   assert.ok(actual.launchStep >= 0);
   assert.ok(actual.vy > 0);
+  assert.equal(actual.bandSide, 0);
+  assert.ok(Math.abs(actual.bandTangent) > 0.001);
+  assert.ok(Math.abs(actual.bandTangent - expected.bandTangent) < 1e-6,
+    '带内切向形变必须随 Schema 保存，避免恢复后改变接触力');
 });
 
 test('等待与结算不发送空时间戳补丁，玩家状态仍正常同步', (t) => {
@@ -65,17 +71,30 @@ test('等待与结算不发送空时间戳补丁，玩家状态仍正常同步',
 
 test('碰撞反馈限量批量发送，出手通知不等待快照', (t) => {
   const r = room(t);
+  const remoteFx = [], localFx = [];
+  for (const [side, local, received] of [[0, false, remoteFx], [1, true, localFx]]) {
+    r.meta.players.set(`player-${side}`, {
+      side, alive: true, localFx: local, state: new PlayerState(),
+      client: { send(type, value) { received.push({ type, value: structuredClone(value) }); } },
+    });
+  }
   r.engine.emit({ type: 'shot', shot: { side: 0, puckId: 2 } });
   for (let i = 0; i < 80; i++) r.engine.emit({ type: 'sfx', e: { k: 'puck', x: 1, y: 2, v: 3 } });
   r.flushEvents();
   assert.equal(r.sent.length, 1);
   assert.equal(r.sent[0].type, 'shot');
   assert.equal(r.fxQueue.length, 32);
+  assert.equal(remoteFx.length, 0, '碰撞反馈等待下一次快照批量发送');
   r.onBeforePatch();
-  assert.equal(r.sent[1].type, 'fx');
-  assert.equal(r.sent[1].value.length, 32);
+  assert.equal(remoteFx.length, 1);
+  assert.equal(remoteFx[0].type, 'fx');
+  assert.equal(remoteFx[0].value.length, 32);
+  assert.equal(localFx.length, 0, '启用本地碰撞反馈的玩家不接收远端反馈');
+  assert.equal(r.fxQueue.length, 0);
   r.onBeforePatch();
-  assert.equal(r.sent.length, 2);
+  assert.equal(remoteFx.length, 1, '下一次快照不重复发送碰撞反馈');
+  assert.equal(localFx.length, 0);
+  assert.equal(r.sent.length, 1, '碰撞反馈只向订阅玩家发送，不进行全房间广播');
 });
 
 test('结束只结算一次且完整释放 Rapier 世界与事件队列', (t) => {

@@ -5,8 +5,8 @@
 // 重建：python3 deploy/build-game.py
 import * as T3 from '../vendor/three-orig.js';
 import { TableAudio, contactSoundKey } from './table-audio.mjs?v=1';
-import { islandMenu, islandHelp } from './island-ui.mjs?v=4';
-import { LocalPrediction } from './prediction.mjs?v=3';
+import { islandMenu, islandHelp } from './island-ui.mjs?v=5';
+import { LocalPrediction, PredictionClock } from './prediction.mjs?v=5';
 import { n as e, t } from '../vendor/colyseus-orig.js';
 import * as n from '@dimforge/rapier2d-compat';
 await n.init();
@@ -19,22 +19,24 @@ var T = 9.5,
   be = 11.5,
   xe = 0.12,
   Se = 10.5,
-  Ce = 0.25,
-  we = 4800,
-  Te = 0.6,
   O = 3.9,
   Ee = 0.4,
-  De = 0.8,
   Oe = (68 * Math.PI) / 180,
-  ke = 1.08,
-  MAX_SHOT_SPEED = 44,
-  Ae = Math.PI,
-  // 滑动阻力与接触摩擦分开：冰面保留惯性，擦边碰撞能传递旋转。
-  je = 0.16,
-  Me = 0.45,
-  Ne = 0.88,
-  Pe = 0.78,
-  Fe = 0.72,
+  MAX_SHOT_SPEED = 28,
+  // 桌面接触统一处理滑动与自旋，避免再叠加独立的速度阻尼。
+  je = 0,
+  Me = 0,
+  TABLE_DRAG = 8.5,
+  BAND_STIFFNESS = 94,
+  BAND_DAMPING = 2.8,
+  BAND_TANGENT_STIFFNESS = 94,
+  BAND_FRICTION = 0.25,
+  DISK_INERTIA = 0.5, // I / m，半径为 1 的均匀圆盘。
+  FRICTION_RADIUS = 2 / 3,
+  MAX_PREVIEW_STEPS = 120,
+  Ne = 0.62,
+  Pe = 0.42,
+  Fe = 0.35,
   Ie = 0.14,
   Le = 0.22,
   k = 1 / 120;
@@ -89,152 +91,91 @@ function Ve(e, t) {
     Math.abs(t) <= 14.55
   );
 }
-var I = T,
-  L = 1,
-  He = -be,
-  Ue = (2 * I) / (1 + Ce),
-  We = 0.02,
-  Ge = 0.98;
-function Ke(e) {
-  return e === 0 ? 1 : -1;
+const L = 1;
+function bandSide(y) {
+  return y < M(0) ? 0 : y > M(1) ? 1 : -1;
 }
-function qe(e) {
-  return e - L < He;
+// 主动拉带与被动回撞共用同一接触弹性近似。d 是法向压缩，q 是切向
+// 弹性形变；单位质量储能为 (Kn*d² + Kt*q²)/2，不按发射/回撞切换刚度。
+function bandImpulse(motion, y, contact) {
+  const sign = A(contact.side), depth = -sign * (y - M(contact.side));
+  if (depth <= 0) return;
+  const normalVelocity = sign * motion.y;
+  // 隐式弹簧/阻尼同时耗散压入与释放能量；单向接触不能吸住离开的球。
+  const normal = Math.max(0, (BAND_STIFFNESS * depth -
+    (BAND_DAMPING + BAND_STIFFNESS * k) * normalVelocity) /
+    (1 + BAND_DAMPING * k + BAND_STIFFNESS * k * k));
+  motion.y += sign * normal * k;
+  // 绕带两侧张力的横向合力通过圆心；只有后缘滑移摩擦产生转矩。
+  // 联立隐式弹簧与 Coulomb 摩擦，使 q 的储能和最终速度使用同一状态。
+  const tangent = -sign, slip = tangent * motion.x - L * motion.w;
+  const u = tangent * motion.x, denominator = 1 + BAND_TANGENT_STIFFNESS * k * k;
+  const elastic = -BAND_TANGENT_STIFFNESS * k * (contact.tangent + k * u) / denominator;
+  const coupling = BAND_TANGENT_STIFFNESS * k * k / denominator;
+  const trial = -(slip + elastic) / (1 + L * L / DISK_INERTIA - coupling);
+  const limit = BAND_FRICTION * normal * k;
+  const friction = F(trial, -limit, limit);
+  const impulse = elastic - coupling * friction + friction;
+  motion.x += tangent * impulse;
+  motion.w -= L * friction / DISK_INERTIA;
+  contact.tangent += k * (u + impulse);
 }
-function Je(e) {
-  return Math.min(Ge, Math.max(We, (e + I) / (2 * I)));
+function tableFriction(motion) {
+  // 均匀圆盘接触的椭圆近似：纯平移减速度为 TABLE_DRAG，
+  // 纯自旋阻力矩为 (2/3)*摩擦力*半径；混合运动共享摩擦预算。
+  const slip = Math.hypot(motion.x, motion.y, FRICTION_RADIUS * motion.w);
+  if (slip === 0) return;
+  const amount = TABLE_DRAG * k / slip;
+  const linear = Math.max(0, 1 - amount);
+  const angular = Math.max(0, 1 - amount * FRICTION_RADIUS ** 2 / DISK_INERTIA);
+  motion.x *= linear;
+  motion.y *= linear;
+  motion.w *= angular;
+  if (Math.hypot(motion.x, motion.y) < 0.015 && Math.abs(motion.w) < 0.02)
+    motion.x = motion.y = motion.w = 0;
 }
-var R = { uLx: 0, uLy: 0, uRx: 0, uRy: 0, lenL: 0, lenR: 0, phi: 0 };
-function Ye(e, t, n) {
-  let r = e + I,
-    i = t - He,
-    a = Math.max(Math.hypot(r, i), L * 1.0001),
-    o = Math.sqrt(a * a - L * L),
-    s = L / a,
-    c = o / a;
-  ((r /= a), (i /= a));
-  let l = r * c + i * s,
-    u = -r * s + i * c,
-    d = -I + l * o,
-    f = He + u * o;
-  ((n.uLx = -l),
-    (n.uLy = -u),
-    (r = e - I),
-    (i = t - He),
-    (a = Math.max(Math.hypot(r, i), L * 1.0001)));
-  let p = Math.sqrt(a * a - L * L);
-  ((s = L / a), (c = p / a), (r /= a), (i /= a));
-  let m = r * c - i * s,
-    h = r * s + i * c,
-    g = I + m * p,
-    _ = He + h * p;
-  ((n.uRx = -m), (n.uRy = -h));
-  let v = (d - e) / L,
-    y = (f - t) / L,
-    b = (g - e) / L,
-    x = (_ - t) / L,
-    S = Math.max(0, Math.atan2(v * x - y * b, v * b + y * x));
-  ((n.phi = S), (n.lenL = o + (L * S) / 2), (n.lenR = p + (L * S) / 2));
-}
-function Xe(e, t) {
-  return we * Math.max(0, e.lenL / (t * Ue) - 1);
-}
-function Ze(e, t) {
-  return we * Math.max(0, e.lenR / ((1 - t) * Ue) - 1);
-}
-function Qe(e, t) {
-  let n = Math.exp(Te * e.phi),
-    r = Xe(e, t),
-    i = Ze(e, t);
-  if (i > n * r) {
-    let r = We,
-      i = t;
-    for (let t = 0; t < 24; t++) {
-      let t = (r + i) / 2;
-      Ze(e, t) > n * Xe(e, t) ? (i = t) : (r = t);
-    }
-    return (r + i) / 2;
+function launchMotion(plan, limit = MAX_PREVIEW_STEPS) {
+  let x = plan.px, y = plan.py, steps = 0;
+  const motion = { x: 0, y: 0, w: 0 };
+  const contact = { side: plan.side, tangent: -A(plan.side) * (plan.px - plan.cx) };
+  // 与实际发射共用受力、滑转摩擦和固定步长，包含斜拉产生的旋转；
+  // 有限的纯数值预览不创建 WASM 世界，AI 碰撞候选仍使用完整物理。
+  while (steps < limit && bandSide(y) === plan.side) {
+    const previousX = x, previousTangent = contact.tangent;
+    bandImpulse(motion, y, contact);
+    tableFriction(motion);
+    x += motion.x * k;
+    y += motion.y * k;
+    contact.tangent = previousTangent - A(plan.side) * (x - previousX);
+    steps++;
+    if (motion.x === 0 && motion.y === 0 && motion.w === 0) break;
   }
-  if (r > n * i) {
-    let r = t,
-      i = Ge;
-    for (let t = 0; t < 24; t++) {
-      let t = (r + i) / 2;
-      Xe(e, t) > n * Ze(e, t) ? (r = t) : (i = t);
-    }
-    return (r + i) / 2;
-  }
-  return t;
+  return { x, y, vx: motion.x, vy: motion.y, av: motion.w, steps,
+    speed: Math.hypot(motion.x, motion.y), released: bandSide(y) !== plan.side };
 }
-function $e(e, t, n, r, i, a, o) {
-  let s = Ke(e),
-    c = s * t,
-    l = s * n;
-  if (!qe(l)) return ((a.sigma = null), !1);
-  (a.sigma === null && (a.sigma = Je(c)), Ye(c, l, R));
-  let u = Qe(R, a.sigma);
-  a.sigma = u;
-  let d = Xe(R, u),
-    f = Ze(R, u),
-    p = d * R.uLx + f * R.uRx,
-    m = d * R.uLy + f * R.uRy,
-    h = Math.hypot(p, m);
-  if (h > 1e-9) {
-    let e = p / h,
-      t = m / h,
-      n = s * r * e + s * i * t;
-    n < 0 && ((p -= 12 * n * e), (m -= 12 * n * t));
-  }
-  return ((o.ax = (s * p) / Ae), (o.ay = (s * m) / Ae), !0);
+function et(pull) {
+  return rt(0, 0, 0, M(0) - F(pull, 0, O)).speed;
 }
-function et(e) {
-  return MAX_SHOT_SPEED * Math.min(1, Math.max(0, e) / O) ** +ke;
+function tt(side, cx, px, py, preview = true) {
+  const dy = M(side) - py, dx = cx - px;
+  const pull = Math.hypot(dx, dy);
+  if (A(side) * dy <= 1e-6) return null;
+  const plan = { side, cx, px, py, dx: dx / pull, dy: dy / pull, pull, dist: pull };
+  if (!preview) return plan;
+  const exit = launchMotion(plan);
+  return Object.assign(plan, { steps: exit.steps, duration: exit.steps * k, exit,
+    exitDistance: Math.hypot(exit.x - px, exit.y - py), exitSpeed: exit.speed, speed: exit.speed });
 }
-function tt(e, t, n, r) {
-  let i = Ke(e),
-    a = M(e),
-    o = i * (n - t),
-    s = i * (a - r),
-    c = Math.hypot(n - t, r - a),
-    l = et(c);
-  if (!(s > 1e-6) || l < 1e-6) return null;
-  let u = -De * Math.atan2(o, s),
-    d = Math.sin(u),
-    f = Math.cos(u),
-    p = s / f,
-    m = l / p,
-    h = Math.PI / (2 * m);
+function nt(plan, steps) {
+  const exit = launchMotion(plan, steps);
+  return Math.hypot(exit.x - plan.px, exit.y - plan.py);
+}
+function rt(side, cx, px, py) {
+  const plan = tt(side, cx, px, py);
+  if (!plan) return { ok: false, x: px, y: py, vx: 0, vy: 0, speed: 0, steps: 0 };
   return {
-    px: n,
-    py: r,
-    dx: i * d,
-    dy: i * f,
-    pull: c,
-    dist: p,
-    speed: l,
-    omega: m,
-    duration: h,
-    steps: Math.max(1, Math.ceil(h / k - 1e-9)),
-  };
-}
-function nt(e, t) {
-  return e.dist * (1 - Math.cos(e.omega * Math.min(t * k, e.duration)));
-}
-function rt(e, t, n, r) {
-  let i = tt(e, t, n, r);
-  if (!i) return { ok: !1, x: n, y: r, vx: 0, vy: 0, speed: 0, steps: 0 };
-  let a = nt(i, i.steps),
-    o = i.dx * i.speed,
-    s = i.dy * i.speed,
-    c = Ke(e) * s;
-  return {
-    ok: i.speed >= 3 && c > 0.2 * i.speed,
-    x: i.px + i.dx * a,
-    y: i.py + i.dy * a,
-    vx: o,
-    vy: s,
-    speed: i.speed,
-    steps: i.steps,
+    ...plan.exit,
+    ok: plan.exit.released && plan.exit.speed >= 3 && A(side) * plan.exit.vy > 0.2 * plan.exit.speed,
   };
 }
 var it = T - 1,
@@ -314,7 +255,7 @@ function ct(e, t, n, r, i) {
     px: o.x,
     py: o.y,
     pull: l,
-    power: Math.min(1, u / MAX_SHOT_SPEED),
+    power: Math.min(1, l / O),
     dirX: u > 1e-6 ? c.vx / u : 0,
     dirY: u > 1e-6 ? c.vy / u : A(e),
     speed: u,
@@ -345,9 +286,8 @@ var pt = 1,
   ht = (e, t) => ((e & 65535) << 16) | (t & 65535),
   gt = ht(pt, 3),
   _t = 3,
-  vt = 0.6,
+  vt = 0,
   yt = be - 1 - 0.05,
-  bt = 0.001,
   xt = class {
     world = null;
     queue = null;
@@ -355,7 +295,7 @@ var pt = 1,
     tags = new Map();
     pre = new Float64Array();
     scratch = { x: 0, y: 0 };
-    acc = { ax: 0, ay: 0 };
+    motion = { x: 0, y: 0, w: 0 };
     constructor(e) {
       this.reset(e);
     }
@@ -454,9 +394,8 @@ var pt = 1,
           color: t.color,
           body: i,
           collider: a,
-          band: [{ sigma: null }, { sigma: null }],
+          band: { side: -1, tangent: 0, integrated: false, previousX: 0, previousTangent: 0 },
           launch: null,
-          launching: !1,
           quietSteps: 0,
         }
       );
@@ -473,15 +412,17 @@ var pt = 1,
         a.body.setTranslation({ x: n, y: r }, !0),
         a.body.setLinvel({ x: 0, y: 0 }, !0),
         a.body.setAngvel(0, !0),
-        (a.band[0].sigma = null),
-        (a.band[1].sigma = null));
-      let o = tt(i, t, n, r);
-      o &&
-        ((a.launch = { plan: o, step: 0, tx: n, ty: r, cx: t, side: i }),
-        a.body.setLinearDamping(0));
+        (a.band.side = -1),
+        (a.band.tangent = 0));
+      let o = tt(i, t, n, r, false);
+      if (o) {
+        a.launch = { plan: o, step: 0, cx: t, side: i };
+        a.band.side = i;
+        a.band.tangent = -A(i) * (n - t);
+      }
     }
     endLaunch(e) {
-      e.launch && ((e.launch = null), e.body.setLinearDamping(je));
+      e.launch = null;
     }
     isLaunching(e) {
       return !!this.find(e)?.launch;
@@ -494,8 +435,8 @@ var pt = 1,
         t.body.setLinvel({ x: 0, y: 0 }, !1),
         t.body.setAngvel(0, !1),
         t.body.setEnabled(!1),
-        (t.band[0].sigma = null),
-        (t.band[1].sigma = null));
+        (t.band.side = -1),
+        (t.band.tangent = 0));
     }
     place(e, t, n) {
       let r = this.find(e);
@@ -506,8 +447,8 @@ var pt = 1,
         r.body.setTranslation({ x: t, y: n }, !0),
         r.body.setLinvel({ x: 0, y: 0 }, !0),
         r.body.setAngvel(0, !0),
-        (r.band[0].sigma = null),
-        (r.band[1].sigma = null));
+        (r.band.side = -1),
+        (r.band.tangent = 0));
     }
     restore(pucks) {
       // 网络校正复用已有 WASM 世界，避免每个快照重建碰撞体。
@@ -515,21 +456,30 @@ var pt = 1,
         const entry = this.find(puck.id);
         if (!entry) continue;
         this.endLaunch(entry);
-        entry.launching = false;
         entry.quietSteps = 0;
-        entry.band[0].sigma = entry.band[1].sigma = null;
+        entry.band.side = -1;
+        entry.band.tangent = 0;
         const body = entry.body;
         body.setEnabled(!(puck.held >= 0));
         body.setTranslation({ x: puck.x, y: puck.y }, true);
         body.setRotation(puck.a, true);
         body.setLinvel({ x: puck.vx ?? 0, y: puck.vy ?? 0 }, true);
         body.setAngvel(puck.av ?? 0, true);
+        if (!(puck.held >= 0) && (puck.bandSide === 0 || puck.bandSide === 1) &&
+            puck.bandSide === bandSide(puck.y) && Number.isFinite(puck.bandTangent)) {
+          entry.band.side = puck.bandSide;
+          entry.band.tangent = puck.bandTangent;
+        }
         if (puck.launchStep >= 0 && !(puck.held >= 0)) {
-          const plan = tt(puck.launchSide, puck.launchCx, puck.launchPx, puck.launchPy);
-          if (plan && puck.launchStep < plan.steps) {
-            entry.launch = { plan, step: puck.launchStep, tx: puck.x, ty: puck.y,
+          const plan = tt(puck.launchSide, puck.launchCx, puck.launchPx, puck.launchPy, false);
+          if (plan && lt(puck.launchSide, puck.y)) {
+            entry.launch = { plan, step: puck.launchStep,
               cx: puck.launchCx, side: puck.launchSide };
-            body.setLinearDamping(0);
+            // 旧快照无切向状态时仅作兼容；新协议始终同步完整接触形变。
+            if (entry.band.side < 0) {
+              entry.band.side = puck.launchSide;
+              entry.band.tangent = -A(puck.launchSide) * (puck.x - puck.launchCx);
+            }
           }
         }
         if (!entry.launch && !puck.vx && !puck.vy && !puck.av && Math.abs(puck.y) < yt)
@@ -540,97 +490,77 @@ var pt = 1,
       let t = this.world;
       if (!t || !this.queue) return false;
       // 静止棋盘无需碰撞检测/求解；launch、place 和 restore 会重新唤醒。
-      if (!this.bodies.some(({ body, launch }) => launch || (body.isEnabled() && !body.isSleeping())))
+      if (!this.bodies.some(({ body, launch }) => body.isEnabled() &&
+          (launch || !body.isSleeping())))
         return false;
-      let n = this.bodies.length,
-        r = this.scratch,
-        i = this.acc;
-      for (let e = 0; e < n; e++) {
-        let t = this.bodies[e],
-          n = t.launch;
-        if (((t.launching = !!n), !n)) continue;
-        let r = nt(n.plan, n.step + 1);
-        ((n.tx = n.plan.px + n.plan.dx * r),
-          (n.ty = n.plan.py + n.plan.dy * r));
-        let i = t.body.translation();
-        (t.body.setLinvel({ x: (n.tx - i.x) / k, y: (n.ty - i.y) / k }, !0),
-          t.body.setAngvel(0, !0));
-      }
-      for (let t = 0; t < n; t++) {
-        let n = this.bodies[t];
-        if (!n.body.isEnabled() || n.body.isSleeping() || n.launch) continue;
-        let a = n.body.translation();
-        if (Math.abs(a.y) < yt) {
-          ((n.band[0].sigma = null), (n.band[1].sigma = null));
-          continue;
-        }
-        let o = n.body.linvel(r),
-          s = o.x,
-          c = o.y,
-          l = !1;
-        for (let t = 0; t < 2; t++) {
-          let r = n.band[t].sigma !== null;
-          if ($e(t, a.x, a.y, s, c, n.band[t], i)) {
-            if (!r && e) {
-              let speed = -A(t) * c;
-              speed > 0.4 && e.push({ k: `band`, x: a.x, y: a.y, v: speed, s: t, a: n.id });
-            }
-            ((s += i.ax * k), (c += i.ay * k), (l = !0));
+      const motion = this.motion;
+      for (const entry of this.bodies) {
+        const body = entry.body;
+        entry.band.integrated = false;
+        if (!body.isEnabled() || (body.isSleeping() && !entry.launch)) continue;
+        const position = body.translation(), velocity = body.linvel();
+        motion.x = velocity.x;
+        motion.y = velocity.y;
+        motion.w = body.angvel();
+        const side = bandSide(position.y);
+        if (entry.launch && side !== entry.launch.side) this.endLaunch(entry);
+        if (entry.band.side !== side) {
+          entry.band.side = side;
+          entry.band.tangent = 0;
+          if (side >= 0 && e) {
+            const incoming = -A(side) * motion.y;
+            if (incoming > 0.4) e.push({ k: `band`, x: position.x, y: position.y,
+              v: incoming, s: side, a: entry.id });
           }
         }
-        l && n.body.setLinvel({ x: s, y: c }, !0);
+        if (side >= 0) {
+          entry.band.integrated = true;
+          entry.band.previousX = position.x;
+          entry.band.previousTangent = entry.band.tangent;
+          bandImpulse(motion, position.y, entry.band);
+        }
+        tableFriction(motion);
+        const elastic = side >= 0;
+        body.setLinvel(motion, elastic);
+        body.setAngvel(motion.w, elastic);
       }
       if (e)
-        for (let e = 0; e < n; e++) {
-          let t = this.bodies[e].body.linvel(r);
-          ((this.pre[2 * e] = t.x), (this.pre[2 * e + 1] = t.y));
+        for (let index = 0; index < this.bodies.length; index++) {
+          const velocity = this.bodies[index].body.linvel();
+          this.pre[2 * index] = velocity.x;
+          this.pre[2 * index + 1] = velocity.y;
         }
-      (t.step(this.queue),
-        e &&
-          this.queue.drainCollisionEvents((t, n, r) => {
-            r && this.onContact(t, n, e);
-          }));
-      for (let e = 0; e < n; e++) {
-        let t = this.bodies[e],
-          n = t.launch;
-        if (!n) continue;
-        n.step++;
-        let r = t.body.translation();
-        Math.abs(r.x - n.tx) > bt || Math.abs(r.y - n.ty) > bt
-          ? this.endLaunch(t)
-          : n.step >= n.plan.steps &&
-            (t.body.setLinvel(
-              { x: n.plan.dx * n.plan.speed, y: n.plan.dy * n.plan.speed },
-              !0,
-            ),
-            this.endLaunch(t));
-      }
-      // 加快出手，但让低速尾段尽快停稳，避免整盘一直漂移。
-      let a = 6 * k,
-        o = 0.8 * k;
-      for (let e = 0; e < n; e++) {
-        let t = this.bodies[e],
-          n = t.body;
-        if (t.launching) {
-          t.launching = !1;
-          continue;
+      t.step(this.queue);
+      if (e) this.queue.drainCollisionEvents((a, b, started) => {
+        if (started) this.onContact(a, b, e);
+      });
+      for (const entry of this.bodies) {
+        const body = entry.body;
+        if (entry.band.integrated) {
+          // 求解器的接触冲量与桌面摩擦会改变实际滑动，不能用预测位移
+          // 更新储能；快照中的 q 始终跟随本步实际的圆心位移。
+          entry.band.tangent = entry.band.previousTangent - A(entry.band.side) *
+            (body.translation().x - entry.band.previousX);
         }
-        if (n.isSleeping() || !n.isEnabled()) continue;
-        let i = n.linvel(r),
-          s = Math.sqrt(i.x * i.x + i.y * i.y);
-        if (s > 0) {
-          let e = s > a ? (s - a) / s : 0;
-          n.setLinvel({ x: i.x * e, y: i.y * e }, !1);
+        if (entry.band.side >= 0 && bandSide(body.translation().y) !== entry.band.side) {
+          entry.band.side = -1;
+          entry.band.tangent = 0;
         }
-        let c = n.angvel();
-        if (c !== 0) {
-          let e = Math.abs(c);
-          n.setAngvel(e > o ? c - Math.sign(c) * o : 0, !1);
+        if (entry.launch) {
+          // step 只标记发射仍在进行，不让长时间堵球导致协议计数溢出。
+          entry.launch.step = Math.min(MAX_PREVIEW_STEPS, entry.launch.step + 1);
+          if (!lt(entry.launch.side, body.translation().y)) this.endLaunch(entry);
         }
-        // 连续静止后休眠；带上仍有弹性势能时不能提前停下。
-        if (s <= a && Math.abs(c) <= o && t.band[0].sigma === null && t.band[1].sigma === null) {
-          if (++t.quietSteps >= 12) n.sleep();
-        } else t.quietSteps = 0;
+        if (body.isSleeping() || !body.isEnabled()) continue;
+        const velocity = body.linvel();
+        // 被桌面静摩擦抵住的轻压带也可休眠；之后的碰撞/抓放/快照会唤醒。
+        if (velocity.x === 0 && velocity.y === 0 && body.angvel() === 0) {
+          if (++entry.quietSteps >= 12) {
+            // 堵住或轻拉后静止也可重新抓取；保留接触储能，下一次碰撞再唤醒。
+            this.endLaunch(entry);
+            body.sleep();
+          }
+        } else entry.quietSteps = 0;
       }
       return true;
     }
@@ -734,6 +664,8 @@ var pt = 1,
           i.launchPx = launch?.plan.px ?? 0;
           i.launchPy = launch?.plan.py ?? 0;
           i.launchSide = launch?.side ?? -1;
+          i.bandSide = n.band.side;
+          i.bandTangent = n.band.tangent;
         }
       }
       e.length = this.bodies.length;
@@ -801,7 +733,7 @@ var pt = 1,
       group: `bonus`,
     },
     golden: {
-      name: `加时金球`,
+      name: `加时进球`,
       points: 20,
       desc: `加时赛中命中`,
       group: `bonus`,
@@ -1076,8 +1008,6 @@ var Rt = class {
   passes = [0, 0];
   prevSide = [];
   lastShot = [-1e9, -1e9];
-  emptySince = [null, null];
-  leadSince = null;
   acc = 0;
   pucks = [];
   tmp = [];
@@ -1086,8 +1016,8 @@ var Rt = class {
   steps = 0;
   scorer = new Ft(this);
   constructor(e = {}) {
-    ((this.matchTime = e.matchTime ?? 180),
-      (this.overtimeTime = e.overtime ?? 60),
+    ((this.matchTime = e.matchTime ?? 60),
+      (this.overtimeTime = e.overtime ?? 120),
       (this.pucks = Be()),
       (this.world = new xt(this.pucks)),
       this.syncPucks(true));
@@ -1109,9 +1039,7 @@ var Rt = class {
       (this.passes[0] = this.passes[1] = 0),
       (this.prevSide = this.pucks.map((e) => N(e.y))),
       (this.lastShot = [-1e9, -1e9]),
-      (this.emptySince = [null, null]),
       (this.overtime = !1),
-      (this.leadSince = null),
       (this.acc = 0),
       (this.steps = 0),
       (this.events = []),
@@ -1177,6 +1105,8 @@ var Rt = class {
       (r.held = e),
       (r.vx = r.vy = r.av = 0),
       (r.launchStep = -1),
+      (r.bandSide = -1),
+      (r.bandTangent = 0),
       (this.holds[e] = { puckId: t, x: r.x, y: r.y }),
       this.emit({ type: `grab`, side: e, puckId: t }),
       { ok: !0 }
@@ -1203,6 +1133,8 @@ var Rt = class {
       (a.held = void 0),
       (a.vx = a.vy = a.av = 0),
       (a.launchStep = -1),
+      (a.bandSide = -1),
+      (a.bandTangent = 0),
       (this.holds[e] = null),
       this.emit({ type: `drop`, side: e, puckId: a.id, x: i.x, y: i.y }),
       { ok: !0 }
@@ -1317,6 +1249,8 @@ var Rt = class {
         t.launchPx = n.launchPx;
         t.launchPy = n.launchPy;
         t.launchSide = n.launchSide;
+        t.bandSide = n.bandSide;
+        t.bandTangent = n.bandTangent;
       }
       let r = N(t.y),
         i = this.prevSide[e];
@@ -1331,31 +1265,17 @@ var Rt = class {
   checkWin() {
     for (let e of [0, 1])
       if (P(this.pucks, e) === 0) {
-        let t = this.emptySince[e];
-        if (t === null) this.emptySince[e] = this.time;
-        else if (this.time - t >= 0.8) {
-          this.finish(e, `clear`);
-          return;
-        }
-      } else this.emptySince[e] = null;
-    let e = this.count(0),
-      t = this.count(1);
-    if (this.overtime) {
-      if (e === t) this.leadSince = null;
-      else if (this.leadSince === null) this.leadSince = this.time;
-      else if (this.time - this.leadSince >= 0.8) {
-        this.finish(e < t ? 0 : 1, `overtime`);
+        this.finish(e, `clear`);
         return;
       }
+    if (this.time < this.periodEnd) return;
+    if (!this.overtime && this.overtimeTime > 0) {
+      this.overtime = !0;
+      this.emit({ type: `overtime` });
+      return;
     }
-    this.time < this.periodEnd ||
-      (e === t
-        ? !this.overtime && this.overtimeTime > 0
-          ? ((this.overtime = !0),
-            (this.leadSince = null),
-            this.emit({ type: `overtime` }))
-          : this.finish(-1, `time`)
-        : this.finish(e < t ? 0 : 1, `time`));
+    const e = this.count(0), t = this.count(1);
+    this.finish(e === t ? -1 : e < t ? 0 : 1, `time`);
   }
   finish(e, t) {
     for (let e of [0, 1]) this.holds[e] && this.drop(e);
@@ -1425,16 +1345,14 @@ var Bt = Math.PI / 180,
   Wt = T - 1,
   Gt = 7;
 function Kt(e, t, n, r) {
-  let i = ut(e, 0, t, n, r),
-    a = rt(e, t, i.px, i.py);
-  if (!a.ok || Math.abs(a.vy) < 1e-6) return null;
-  let o = -a.y / a.vy;
-  return o > 0 ? a.x + a.vx * o : null;
+  const shot = ut(e, 0, t, n, r), aim = ct(e, t, shot.px, shot.py, []);
+  if (!aim.ok || Math.abs(aim.dirY) < 1e-6) return null;
+  const distance = -aim.exitY / aim.dirY;
+  return distance > 0 ? aim.exitX + aim.dirX * distance : null;
 }
 function qt(e, t, n, r) {
-  let i = ut(e, 0, t, n, r),
-    a = rt(e, t, i.px, i.py);
-  return a.ok ? Math.atan2(a.vx, A(e) * a.vy) : null;
+  const shot = ut(e, 0, t, n, r), aim = ct(e, t, shot.px, shot.py, []);
+  return aim.ok ? Math.atan2(aim.dirX, A(e) * aim.dirY) : null;
 }
 function Jt(e, t, n, r) {
   let i = 0,
@@ -2234,17 +2152,13 @@ var _n = class {
     }
   },
   Dn = `sling.settings`,
-  On = { guide: !0, overtimeNoGuide: !0, highQuality: !0 };
+  On = { guide: !0, highQuality: !0 };
 function kn() {
   try {
     let e = JSON.parse(localStorage.getItem(Dn) ?? `{}`);
     return {
       guide: typeof e.guide == `boolean` ? e.guide : On.guide,
       highQuality: typeof e.highQuality == `boolean` ? e.highQuality : On.highQuality,
-      overtimeNoGuide:
-        typeof e.overtimeNoGuide == `boolean`
-          ? e.overtimeNoGuide
-          : On.overtimeNoGuide,
     };
   } catch {
     return { ...On };
@@ -2258,7 +2172,7 @@ function An(e) {
   } catch {}
 }
 function jn(e) {
-  return U.guide && !(e && U.overtimeNoGuide);
+  return U.guide && !e;
 }
 function Mn(e) {
   return (
@@ -2268,7 +2182,6 @@ function Mn(e) {
 var Nn = {
   clear: [`你率先清空了自己的半场`, `对手率先清空了半场`],
   time: [`时间到，你的半场剩余更少`, `时间到，对手的半场剩余更少`],
-  overtime: [`加时赛中你率先领先，金球制胜`, `加时赛中对手率先领先`],
   forfeit: [`对手中途离开，判你获胜`, `你中途离开，判负`],
   disconnect: [`对手断线未能重连，判你获胜`, `断线超时，判负`],
 };
@@ -2280,16 +2193,12 @@ function Fn(e, t, n, r) {
   else if (r === `clear`) {
     let r = n === t;
     e.ui.flash(r ? `清空！` : `对手清空了`, r ? `go` : `warn`);
-  } else if (r === `overtime`) {
-    let r = n === t;
-    e.ui.flash(r ? `金球制胜！` : `对手金球制胜`, r ? `go` : `warn`);
   }
 }
 function In(e, t) {
   (e.ui.flash(`加时赛`, `warn`), e.sfx.go());
-  let n = U.guide && !jn(!0);
-  e.ui.toast(`加时 ${t} 秒：先领先的一方获胜${n ? ` · 辅助线已关闭` : ``}`, {
-    ms: 2600,
+  e.ui.toast(`加时 ${t} 秒：辅助线已关闭。清空半场即获胜，到时剩余少的一方获胜。`, {
+    ms: 4000,
   });
 }
 function Ln(e, t) {
@@ -2397,7 +2306,7 @@ var Hn = {
           onShoot: (e) => {
             let t = this.engine.shoot(0, e);
             t.ok
-              ? (r.buzz(12 + Math.round(t.shot.power * 16)),
+              ? (r.buzz(5 + Math.round(t.shot.power * 7)),
                 this.guide?.finish())
               : (this.engine.drop(0, e.px, e.py),
                 i.toast(
@@ -2801,7 +2710,7 @@ var Yn = class {
       return Rt.prototype.freeSpot.call({ pucks }, drop.side,
         F(drop.x, bounds.minX, bounds.maxX), F(drop.y, bounds.minY, bounds.maxY), drop.puckId);
     });
-    predictionClock = null;
+    predictionClock = new PredictionClock();
     inputSeq = 0;
     offset = null;
     pending = [null, null];
@@ -2836,6 +2745,8 @@ var Yn = class {
     renameSeq = 0;
     pendingRename = null;
     constructor(t, n, r) {
+      // 刚创建就切去分享，也应尝试恢复同一个好友房。
+      if (r === `friend`) n.reconnection.minUptime = 0;
       ((this.ctx = t),
         (this.room = n),
         (this.mode = r),
@@ -2859,15 +2770,19 @@ var Yn = class {
         n.onMessage(`score`, () => {}),
         n.onMessage(`evt`, (e) => this.onEvt(e)),
         n.onDrop(() => {
+          if (this.leaving) return;
+          // 等待好友时，重试窗口覆盖服务端两分钟的席位保留期。
+          n.reconnection.maxRetries = r === `friend` && n.state?.phase === `waiting` ? 30 : 15;
           ((this.dropped = !0), this.input.abort(), this.prediction.clear());
           this.fx.length = this.predictedFx.length = 0;
           this.localFx = null;
         }),
         n.onReconnect(() => {
+          if (this.leaving) { n.leave().catch(() => {}); return; }
           this.dropped = !1;
           this.snaps.length = 0;
           this.offset = null;
-          this.predictionClock = null;
+          this.predictionClock.reset();
           this.prediction.clear();
           this.fx.length = this.predictedFx.length = 0;
           this.localFx = null;
@@ -2910,7 +2825,7 @@ var Yn = class {
           if (predicted) a.launch(t.power, zn(i, e.px, e.py));
           (this.room.send(`shoot`, { ...e, seq }),
             (this.released = { aim: { ...t }, seq, at: performance.now() }),
-            a.buzz(12 + Math.round(t.power * 16)),
+            a.buzz(5 + Math.round(t.power * 7)),
             this.guide.finish(),
             this.hinted || ((this.hinted = !0), o.hint(null)));
         },
@@ -2946,10 +2861,7 @@ var Yn = class {
         typeof n.state?.serverTime == `number` && this.onState(n.state));
     }
     predictionTime(now = performance.now()) {
-      // 跟随已完成的物理时间，服务器丢弃积压后也不会永久顶满外推上限。
-      const clock = this.predictionClock;
-      return clock ? clock.time + Math.max(0, now - clock.at) +
-        Math.min(250, Math.max(0, this.ping ?? 0)) : now + (this.offset ?? 0);
+      return this.predictionClock.sample(now) ?? now + (this.offset ?? 0);
     }
     get st() {
       return this.room.state;
@@ -3039,6 +2951,7 @@ var Yn = class {
               a: Number.isFinite(e.a) ? e.a : 0,
               color: e.c,
               vx: e.vx, vy: e.vy, av: e.av,
+              bandSide: e.bandSide, bandTangent: e.bandTangent,
               launchStep: e.launchStep, launchCx: e.launchCx,
               launchPx: e.launchPx, launchPy: e.launchPy, launchSide: e.launchSide,
               held: e.held === 0 || e.held === 1 ? e.held : void 0,
@@ -3066,7 +2979,7 @@ var Yn = class {
       e.players?.forEach((player) => { shots[player.side] = player.shots; });
       this.inputSeq = Math.max(this.inputSeq, me?.inputSeq || 0);
       this.prediction.receive(r, n, e.phase, { inputSeq: me?.inputSeq, shots });
-      this.predictionClock = { time: n, at: t };
+      this.predictionClock.receive(n, t, this.ping, e.phase);
       this.setLocalFx(this.prediction.enabled);
       let c = e.timeLeft / 10;
       c !== this.timeAnchor.v && (this.timeAnchor = { v: c, at: t });
@@ -3329,7 +3242,7 @@ var Yn = class {
           ((this.overtime = s),
           s &&
             a === `playing` &&
-            In(this.ctx, Math.round((e.otTime || 600) / 10))),
+            In(this.ctx, Math.round((e.otTime || 1200) / 10))),
         o !== null &&
           !this.viewSideSet &&
           ((this.viewSideSet = !0), r.setViewSide(o, !0)),
@@ -3532,6 +3445,13 @@ var Yn = class {
     updateHud(e, t, n) {
       let { ui: r } = this.ctx,
         i = e.phase;
+      if (i === `waiting`) {
+        const opponent = this.opp;
+        const notice = this.dropped ? `网络不稳定，正在重连…`
+          : opponent && !opponent.connected ? `好友暂时离线，等待重新连接…` : null;
+        if (notice !== this.noticeText) { this.noticeText = notice; r.setInviteStatus(notice); }
+        return;
+      }
       if (i !== `playing` && i !== `starting` && i !== `over`) return;
       let a = this.mySide ?? 0,
         o = this.me,
@@ -3606,6 +3526,8 @@ var Yn = class {
       return !!t && !this.input.aim && this.denyReason(t) === null;
     }
     dispose() {
+      this.room.reconnection.enabled = false;
+      this.room.reconnection.maxRetries = 0;
       ((this.pendingRename &&=
         (window.clearTimeout(this.pendingRename.timer),
         this.pendingRename.reject(Error(`已离开对局，请在主菜单修改昵称。`)),
@@ -3906,12 +3828,8 @@ var ir = class {
             <input type="checkbox" class="switch" data-set="sound">
           </label>
           <label class="setting">
-            <span class="txt"><b>瞄准辅助线</b><small>拉伸时显示发射方向与力度的预测虚线。关闭后双方的虚线都不显示，力度条保留</small></span>
+            <span class="txt"><b>瞄准辅助线</b><small>常规时间拉伸时显示预测虚线，力度条始终保留。加时赛双方自动隐藏辅助线</small></span>
             <input type="checkbox" class="switch" data-set="guide">
-          </label>
-          <label class="setting">
-            <span class="txt"><b>加时赛关闭辅助线</b><small>常规时间结束时双方剩余相同，进入 60 秒加时赛，先领先的一方获胜。开启后加时赛中不显示辅助线</small></span>
-            <input type="checkbox" class="switch" data-set="overtimeNoGuide">
           </label>
         </div>
         <div class="stack" style="margin-top:18px"><button class="btn btn-wood" data-act="back">完成</button></div>
@@ -4081,8 +3999,6 @@ var ir = class {
       for (let e of this.root.querySelectorAll(`[data-set]`)) {
         let t = e.dataset.set;
         e.checked = t === `sound` ? this.sfx.enabled : U[t];
-        let n = t === `overtimeNoGuide` && !U.guide;
-        ((e.disabled = n), e.closest(`.setting`)?.classList.toggle(`muted`, n));
       }
     }
     loadBoard(e) {
@@ -4495,6 +4411,7 @@ var ir = class {
         i = typeof navigator.share == `function`;
       r.innerHTML = `<div class="spinner"><span class="pk a"></span><span class="pk b"></span></div>
       <div class="big">等待好友加入…</div>
+      <div class="mono" data-invite-status role="status" hidden></div>
       <div class="mono">房间号</div>
       <div class="room-code">${K(e)}</div>
       <div class="link-box"><input readonly aria-label="好友邀请链接" value="${K(t)}"><button class="btn btn-wood btn-small" data-x="copy">${G.copy}复制链接</button></div>
@@ -4546,6 +4463,10 @@ var ir = class {
         };
       }),
         this.show(`wait`));
+    }
+    setInviteStatus(text) {
+      const status = this.screens.get(`wait`).querySelector(`[data-invite-status]`);
+      if (status) { status.textContent = text || ``; status.hidden = !text; }
     }
     showVersus(e, t, n, r = `匹配成功`) {
       let i = J(this.screens.get(`versus`), `.versus`),
@@ -5295,6 +5216,38 @@ function pr(e, t) {
   let n = parseInt(e.slice(1), 16);
   return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${t.toFixed(3)})`;
 }
+// 归一化纹路让颜色与高度图在不同分辨率下仍然对齐；只在建场时绘制。
+function fineWoodGrain(ctx, width, height, dark, light, seed, vertical = false) {
+  const random = sr(seed);
+  ctx.save();
+  ctx.scale(width / 512, height / 512);
+  if (vertical) {
+    ctx.translate(512, 0);
+    ctx.rotate(Math.PI / 2);
+  }
+  for (let row = -2; row < 222; row++) {
+    const y = row * 512 / 220 + (random() - 0.5) * 0.8;
+    ctx.strokeStyle = pr(random() < 0.2 ? light : dark, 0.07 + random() * 0.11);
+    ctx.lineWidth = 0.4 + random() * 0.55;
+    ctx.beginPath();
+    for (let x = -8; x <= 520; x += 8) {
+      const bend = 2.2 * Math.sin(x * Math.PI * 2 / 512 + y * 0.018) +
+        0.45 * Math.sin(x * Math.PI * 6 / 512 + y * 0.031);
+      if (x === -8) ctx.moveTo(x, y + bend);
+      else ctx.lineTo(x, y + bend);
+    }
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+function boardRelief() {
+  const [canvas, ctx] = cr(512, 832);
+  ctx.fillStyle = '#808080';
+  ctx.fillRect(0, 0, 512, 832);
+  fineWoodGrain(ctx, 512, 832, '#555555', '#aaaaaa', 42, true);
+  // 高度是线性数据，不能走 lr() 的 sRGB 颜色转换。
+  return new de(canvas);
+}
 function mr() {
   let e = Math.round(T * 2 * 56),
     t = Math.round(E * 2 * 56),
@@ -5302,34 +5255,8 @@ function mr() {
     i = sr(42),
     a = (e) => (e + T) * 56,
     o = (e) => (E - e) * 56;
-  ((r.fillStyle = `#f0e4c9`), r.fillRect(0, 0, e, t));
-  for (let n = 0; n < 70; n++) {
-    let n = i() * e,
-      a = i() * t,
-      o = 80 + i() * 380,
-      s = r.createRadialGradient(n, a, 0, n, a, o),
-      c = i() < 0.55;
-    (s.addColorStop(0, c ? `rgba(130,145,99,0.035)` : `rgba(255,251,226,0.08)`),
-      s.addColorStop(1, `rgba(0,0,0,0)`),
-      (r.fillStyle = s),
-      r.fillRect(0, 0, e, t));
-  }
-  for (let n = 0; n < 26e3; n++) {
-    let n = i() * e,
-      a = i() * t,
-      o = 2 + i() * 9,
-      s = i() * Math.PI;
-    ((r.strokeStyle =
-      i() < 0.5
-        ? `rgba(142,132,99,${0.015 + i() * 0.025})`
-        : `rgba(255,255,237,${0.03 + i() * 0.04})`),
-      (r.lineWidth = 0.6 + i() * 0.8),
-      r.beginPath(),
-      r.moveTo(n, a),
-      r.lineTo(n + Math.cos(s) * o, a + Math.sin(s) * o),
-      r.stroke());
-  }
-  ur(r, e, t, 5, i);
+  ((r.fillStyle = `#e6d5b0`), r.fillRect(0, 0, e, t));
+  fineWoodGrain(r, e, t, '#ab8b5e', '#fff1cd', 42, true);
   let s = `rgba(126,149,111,0.42)`,
     c = `rgba(92,128,91,0.76)`;
   for (let e of [0, 1]) {
@@ -5437,34 +5364,53 @@ function _r(e, t, n, r) {
   }
   (e.closePath(), e.fill());
 }
-function vr(e, t) {
-  const [canvas, ctx] = cr(256, 256);
-  const coral = e === `maple`;
-  dr(ctx, 256, 256, {
-    base: coral ? `#bd7557` : `#3f785c`,
-    dark: coral ? `#a45f45` : `#315d47`,
-    light: coral ? `#e5b18a` : `#94b58d`,
-    lines: 15, wave: 0.6, seed: t,
-  });
-  ctx.strokeStyle = coral ? `#f5d2a8` : `#bbd5ac`;
-  ctx.lineWidth = 3;
+function puckMark(ctx, coral, relief = false) {
+  ctx.strokeStyle = relief ? '#606060' : coral ? '#f5d2a8' : '#bbd5ac';
+  ctx.lineWidth = 2.4;
   ctx.beginPath();
   ctx.arc(128, 128, 89, 0, Math.PI * 2);
   ctx.stroke();
-  // A small carved leaf on each puck, readable even at phone sizes.
-  ctx.fillStyle = coral ? `#f7ddba` : `#d6e4bc`;
+  ctx.fillStyle = relief ? '#686868' : coral ? '#f7ddba' : '#d6e4bc';
   ctx.beginPath();
   ctx.moveTo(103, 145);
   ctx.bezierCurveTo(85, 107, 116, 82, 158, 94);
   ctx.bezierCurveTo(171, 134, 139, 163, 103, 145);
   ctx.fill();
-  ctx.strokeStyle = coral ? `#c18a69` : `#628b69`;
-  ctx.lineWidth = 5;
+  ctx.strokeStyle = relief ? '#777777' : coral ? '#c18a69' : '#628b69';
+  ctx.lineWidth = 4;
   ctx.lineCap = `round`;
   ctx.beginPath();
   ctx.moveTo(99, 158);
   ctx.lineTo(141, 112);
   ctx.stroke();
+}
+function puckRelief() {
+  const [canvas, ctx] = cr(512, 512);
+  ctx.fillStyle = '#808080';
+  ctx.fillRect(0, 0, 512, 512);
+  ctx.scale(2, 2);
+  // 外缘浅车槽与叶形凹刻共享一个高度图，所有颜色/木纹变体复用。
+  ctx.strokeStyle = '#707070';
+  ctx.lineWidth = 0.9;
+  ctx.beginPath();
+  ctx.arc(128, 128, 117, 0, Math.PI * 2);
+  ctx.stroke();
+  puckMark(ctx, false, true);
+  return new de(canvas);
+}
+function vr(e, t) {
+  const [canvas, ctx] = cr(512, 512);
+  const coral = e === `maple`;
+  dr(ctx, 512, 512, {
+    base: coral ? `#ce8867` : `#51876a`,
+    dark: coral ? `#ac7155` : `#3d6c50`,
+    light: coral ? `#e8b792` : `#91b390`,
+    lines: 30, wave: 0.35, seed: t,
+  });
+  fineWoodGrain(ctx, 512, 512,
+    coral ? '#9b654d' : '#365e45', coral ? '#ebc39c' : '#a6c39c', t);
+  ctx.scale(2, 2);
+  puckMark(ctx, coral);
   return lr(canvas);
 }
 function yr() {
@@ -5527,31 +5473,52 @@ var Y = 1.3,
 function Q(e, t, n = 0, r = new v()) {
   return r.set(e, n, -t);
 }
-function Er(e, t, n, r = 9, i = 5.5) {
-  let a = e.getAttribute(`position`),
-    o = e.getAttribute(`normal`),
-    s = new Float32Array(a.count * 2),
-    c = n.x * 0.37 + n.z * 0.11;
-  for (let e = 0; e < a.count; e++) {
-    let l = a.getX(e) + n.x,
-      u = a.getY(e) + n.y,
-      d = a.getZ(e) + n.z,
-      f = Math.abs(o.getX(e)),
-      p = Math.abs(o.getY(e)),
-      m = Math.abs(o.getZ(e)),
-      h,
-      g;
-    (p >= f && p >= m
-      ? t === `z`
-        ? ((h = d / r), (g = l / i))
-        : ((h = l / r), (g = d / i))
-      : f >= m
-        ? ((h = d / r), (g = u / i))
-        : ((h = l / r), (g = u / i)),
-      (s[e * 2] = h + c),
-      (s[e * 2 + 1] = g + c * 0.5));
+function Er(e, t) {
+  const positions = e.getAttribute('position'), normals = e.getAttribute('normal');
+  const uv = new Float32Array(positions.count * 2), alongZ = t === 'z';
+  const params = e.type === 'RoundedBoxGeometry' ? e.parameters : null;
+  let halfWidth, halfHeight, halfLength, centerCross = 0, centerY = 0, centerLong = 0;
+  if (params) {
+    halfWidth = (alongZ ? params.width : params.depth) / 2;
+    halfHeight = params.height / 2;
+    halfLength = (alongZ ? params.depth : params.width) / 2;
+  } else {
+    e.computeBoundingBox();
+    const { min, max } = e.boundingBox, axis = alongZ ? 'x' : 'z', longAxis = alongZ ? 'z' : 'x';
+    halfWidth = (max[axis] - min[axis]) / 2;
+    halfHeight = (max.y - min.y) / 2;
+    halfLength = (max[longAxis] - min[longAxis]) / 2;
+    centerCross = (max[axis] + min[axis]) / 2;
+    centerY = (max.y + min.y) / 2;
+    centerLong = (max[longAxis] + min[longAxis]) / 2;
   }
-  e.setAttribute(`uv`, new b(s, 2));
+  const perimeter = 4 * (halfWidth + halfHeight);
+  for (let vertex = 0; vertex < positions.count; vertex++) {
+    const cross = (alongZ ? positions.getX(vertex) : positions.getZ(vertex)) - centerCross;
+    const y = positions.getY(vertex) - centerY;
+    const longitudinal = (alongZ ? positions.getZ(vertex) : positions.getX(vertex)) - centerLong;
+    const endNormal = alongZ ? normals.getZ(vertex) : normals.getX(vertex);
+    if (Math.abs(endNormal) > 0.999999) {
+      // 平坦端盖单独展开；外框端盖位于木条接头内。
+      uv[vertex * 2] = (cross + halfWidth) / (2 * halfWidth);
+      uv[vertex * 2 + 1] = (y + halfHeight) / (2 * halfHeight);
+      continue;
+    }
+    // 固定长轴顺纹，截面按周长展开。倒角位置连续投影到矩形边界，
+    // 不再因法线主轴切换改变 UV；唯一环绕接缝位于木条底面。
+    const scale = Math.max(Math.abs(cross) / halfWidth, Math.abs(y) / halfHeight, 1e-8);
+    const px = cross / scale, py = y / scale;
+    let distance;
+    if (Math.abs(cross) / halfWidth >= Math.abs(y) / halfHeight) {
+      distance = cross >= 0 ? halfWidth + halfHeight + py
+        : 3 * halfWidth + 3 * halfHeight - py;
+    } else if (y >= 0) distance = 2 * (halfWidth + halfHeight) - px;
+    else distance = px >= 0 ? px : perimeter + px;
+    // 非无缝木纹沿整条木材只铺一次，避免重复边缘形成矩形断缝。
+    uv[vertex * 2] = (longitudinal + halfLength) / (2 * halfLength);
+    uv[vertex * 2 + 1] = distance / perimeter;
+  }
+  e.setAttribute('uv', new b(uv, 2));
 }
 function Dr(e, t, n) {
   let r = new le(e, {
@@ -5583,12 +5550,12 @@ function Or(e) {
   n.anisotropy = e;
   let r = new he({
       map: n,
-      roughness: 0.82,
-      clearcoat: 0.08,
-      clearcoatRoughness: 0.5,
+      roughness: 0.6,
+      clearcoat: 0.18,
+      clearcoatRoughness: 0.4,
     }),
     i = (e, n, i) => {
-      Er(e, i, n);
+      Er(e, i);
       let a = new g(e, r);
       return (
         a.position.copy(n),
@@ -5605,11 +5572,13 @@ function Or(e) {
     i(new fe(Y, a, s, 4, 0.14), new v(e * (T + Y / 2), o, 0), `z`);
   for (let e of [-1, 1])
     i(new fe(T * 2 + 0.02, a, Y, 4, 0.14), new v(0, o, e * (E + Y / 2)), `x`);
-  let c = mr();
+  let c = mr(),
+    relief = boardRelief();
   c.anisotropy = e;
+  relief.anisotropy = e;
   let l = new g(
     new p(T * 2, E * 2),
-    new _({ map: c, roughness: 0.92, metalness: 0 }),
+    new _({ map: c, bumpMap: relief, bumpScale: 0.025, roughness: 0.72, metalness: 0 }),
   );
   ((l.rotation.x = -Math.PI / 2), (l.receiveShadow = !0), t.add(l));
   let d = ye + D;
@@ -5866,10 +5835,10 @@ var Ir = class {
     let n = this.f * e;
     this.vibs.push({
       cx: n,
-      amp: 0.08 + t * 0.8,
+      amp: 0.015 + t * 0.18,
       t: 0,
-      freq: 9 + t * 4,
-      decay: 0.3,
+      freq: 14 + t * 4,
+      decay: 0.12,
     });
   }
   update(e, t) {
@@ -6142,7 +6111,7 @@ var Rr = class {
     q = new r();
     s = new v();
     time = 0;
-    static PER = 7;
+    static PER = 3;
     constructor(t = 12) {
       let n = t * e.PER,
         r = new S(0.92, 32).rotateX(-Math.PI / 2);
@@ -6182,19 +6151,19 @@ var Rr = class {
         let i = n[0],
           a = n[2],
           o = Math.hypot(i.x - a.x, i.y - a.y) / Math.max(0.001, i.t - a.t);
-        if (o < 11) continue;
-        let s = Math.min(1, (o - 11) / 18),
+        if (o < 22) continue;
+        let s = Math.min(1, (o - 22) / 12),
           c = t.color === 0;
         for (let t = 1; t <= e.PER && t < n.length; t++) {
           let i = n[t];
-          if (this.time - i.t > 0.12) break;
+          if (this.time - i.t > 0.05) break;
           let a = 1 - t / (e.PER + 1);
           Q(i.x, i.y, 0.02 + t * 0.001, this.p);
           let o = 0.98 - t * 0.04;
           (this.s.set(o, 1, o),
             this.m.compose(this.p, this.q, this.s),
             this.mesh.setMatrixAt(r, this.m),
-            (this.alpha[r] = 0.32 * a * s),
+            (this.alpha[r] = 0.055 * a * s),
             (this.tint[r * 3] = c ? 0.12 : 0.98),
             (this.tint[r * 3 + 1] = c ? 0.1 : 0.88),
             (this.tint[r * 3 + 2] = c ? 0.09 : 0.68),
@@ -6209,29 +6178,30 @@ var Rr = class {
   };
 function Vr() {
   let e = [],
-    t = 0.12,
+    t = 0.08,
     n = X;
-  (e.push(new i(0, 0)), e.push(new i(0.88, 0)));
+  (e.push(new i(0, 0)), e.push(new i(1 - t, 0)));
   for (let n = 1; n <= 6; n++) {
     let r = (n / 6) * (Math.PI / 2);
-    e.push(new i(0.88 + Math.sin(r) * t, t - Math.cos(r) * t));
+    e.push(new i(1 - t + Math.sin(r) * t, t - Math.cos(r) * t));
   }
   e.push(new i(1, n - t));
   for (let r = 1; r <= 6; r++) {
     let a = (r / 6) * (Math.PI / 2);
-    e.push(new i(0.88 + Math.cos(a) * t, n - t + Math.sin(a) * t));
+    e.push(new i(1 - t + Math.cos(a) * t, n - t + Math.sin(a) * t));
   }
-  return (e.push(new i(0.86, n)), new _e(e, 56));
+  return (e.push(new i(0.9, n)), new _e(e, 56));
 }
 var Hr = class {
     group = new ne();
     views = new Map();
     sideGeo = Vr();
-    topGeo = new S(0.87, 56).rotateX(-Math.PI / 2);
+    topGeo = new S(0.91, 56).rotateX(-Math.PI / 2);
     blobGeo = new p(2.7, 2.7).rotateX(-Math.PI / 2);
     ringGeo = new p(3.1, 3.1).rotateX(-Math.PI / 2);
     blobTex = yr();
     ringTex = br();
+    topRelief = puckRelief();
     sideMats;
     topMats;
     tmp = new v();
@@ -6242,7 +6212,7 @@ var Hr = class {
             dark: `#3f6b53`,
             light: `#87ab8b`,
             lines: 30,
-            wave: 0.5,
+            wave: 0.25,
             seed: 21,
           },
           512,
@@ -6254,25 +6224,26 @@ var Hr = class {
             dark: `#a76f54`,
             light: `#e7ba97`,
             lines: 30,
-            wave: 0.5,
+            wave: 0.25,
             seed: 22,
           },
           512,
           128,
         );
-      for (let r of [t, n]) ((r.anisotropy = e), r.repeat.set(3, 1));
+      for (let r of [t, n]) r.anisotropy = e;
+      this.topRelief.anisotropy = e;
       ((this.sideMats = [
         new he({
           map: t,
-          roughness: 0.85,
-          clearcoat: 0.08,
-          clearcoatRoughness: 0.22,
+          roughness: 0.52,
+          clearcoat: 0.22,
+          clearcoatRoughness: 0.32,
         }),
         new he({
           map: n,
-          roughness: 0.85,
-          clearcoat: 0.08,
-          clearcoatRoughness: 0.3,
+          roughness: 0.52,
+          clearcoat: 0.22,
+          clearcoatRoughness: 0.32,
         }),
       ]),
         (this.topMats = [0, 1].map((t) =>
@@ -6282,9 +6253,11 @@ var Hr = class {
               (r.anisotropy = e),
               new he({
                 map: r,
-                roughness: 0.86,
-                clearcoat: 0.08,
-                clearcoatRoughness: 0.22,
+                bumpMap: this.topRelief,
+                bumpScale: 0.035,
+                roughness: 0.6,
+                clearcoat: 0.2,
+                clearcoatRoughness: 0.35,
               })
             );
           }),
@@ -6430,9 +6403,9 @@ var Hr = class {
         (s.bottom = -20),
         (s.near = 5),
         (s.far = 70),
-        (a.shadow.radius = 5),
-        (a.shadow.bias = -4e-4),
-        (a.shadow.normalBias = 0.025),
+        (a.shadow.radius = 1.5),
+        (a.shadow.bias = -2e-4),
+        (a.shadow.normalBias = 0.018),
         r.add(a, a.target));
       let c = new ee(0xf6f8f2, 0.35);
       (c.position.set(14, 16, -8),
@@ -6508,32 +6481,13 @@ var Hr = class {
         y: ((1 - r.y) / 2) * this.height,
       };
     }
-    impact(e, t, n, r) {
-      if (this.effectsOn) {
-        if (e === `puck` && r > 6) {
-          let e = Math.min(14, Math.round(r / 2.5));
-          if (r > 13) this.rings.spawn(t, n, 16773572, 1.2 + Math.min(1, r / MAX_SHOT_SPEED) * 0.7, 0.16);
-          this.sparks.emit(t, n, X * 0.5, e, {
-            color: 16769184,
-            speed: 2 + r * 0.12,
-            up: 1.4,
-            life: 0.18,
-            size: 0.18,
-            gravity: 10,
-          });
-        } else if ((e === `wall` || e === `divider`) && r > 9) {
-          let e = Math.min(10, Math.round(r / 3));
-          this.sparks.emit(t, n, 0.25, e, {
-            color: 14268554,
-            speed: 1.6,
-            up: 1.2,
-            life: 0.22,
-            size: 0.2,
-            gravity: 8,
-            spread: 0.5,
-          });
-        }
-      }
+    impact(kind, x, y, speed) {
+      // 木质接触仅保留极短、少量的尘点，不出现火花或冲击波。
+      if (!this.effectsOn || speed < 18 || kind === `band`) return;
+      this.sparks.emit(x, y, 0.18, Math.min(3, Math.floor(speed / 9)), {
+        color: 14603700, speed: 0.45, up: 0.35, life: 0.12,
+        size: 0.09, gravity: 8, spread: 0.25,
+      });
     }
     shake(e) {
       this.shakes.set(e, 0.32);

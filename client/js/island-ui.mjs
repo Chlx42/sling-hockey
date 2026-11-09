@@ -17,7 +17,7 @@ export function islandMenu(icons) {
       <main class="island-main">
         <div class="island-intro">
           <div class="island-heading">
-            <span class="eyebrow"><span></span>给自己，三分钟的好心情</span>
+            <span class="eyebrow"><span></span>给自己，一点好心情</span>
             <h1>广告位<em>招租</em></h1>
             <p>一张小木桌，一次小较量。<br>拉住、瞄准，把快乐弹到对面。</p>
           </div>
@@ -61,5 +61,5 @@ export function islandHelp() {
   return `<div class="help-lead"><span class="section-kicker">HOW TO PLAY</span><h2>三步，找到手感。</h2><p class="sub">像玩弹弓一样。先清空自己的半场，就赢了。</p></div>
     <ol class="play-steps">${[['按住冰球','自己半场内，停下或慢慢滑动的球都能拿。'],['压带，向后拉','把球拖到底线弹力带，再向后拉。拉得越远，力度越大。'],['松手，穿过洞口','瞄准中间的小洞，松手发射。往右后方拉，球向左前方弹。']].map(([title, text], i) => `<li>${diagram(i)}<div><span class="step-number">0${i+1}</span><h3>${title}</h3><p>${text}</p></div></li>`).join('')}</ol>
     <div class="rule-callout"><b>双方同时出手，不用等回合。</b><span>球的颜色不代表归属，落在你半场的球都归你操作。</span></div>
-    <details class="rule-details"><summary>比赛时间与操作小技巧<span>＋</span></summary><div><p><b>3 分钟一局：</b>时间到时，剩球较少的一方获胜。相同则加时 60 秒，先领先的一方获胜。</p><p><b>细调方向：</b>拉满后手指还可以继续向后拉，左右挪动，方向会调得更细。</p><p><b>取消瞄准：</b>电脑按 Esc 或右键；手机把球拖回场内再松手。人机对战可用左上角菜单暂停。</p><p>加时赛默认关闭辅助线，可在设置中调整。</p></div></details>`;
+    <details class="rule-details"><summary>比赛时间与操作小技巧<span>＋</span></summary><div><p><b>60 秒常规时间：</b>清空自己的半场即刻获胜。到时仍未清空，就自动进入 120 秒加时。</p><p><b>加时规则：</b>双方自动隐藏辅助线，清空半场仍可即刻获胜。加时结束时，剩球较少的一方获胜，相同则平局。</p><p><b>细调方向：</b>拉满后手指还可以继续向后拉，左右挪动，方向会调得更细。</p><p><b>取消瞄准：</b>电脑按 Esc 或右键；手机把球拖回场内再松手。人机对战可用左上角菜单暂停。</p><p>常规时间的辅助线可在设置中开关；加时赛始终关闭。</p></div></details>`;
 }

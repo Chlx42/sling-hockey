@@ -19,6 +19,8 @@ export class PuckState extends Schema {
     this.launchPx = 0;
     this.launchPy = 0;
     this.launchSide = -1;
+    this.bandSide = -1;
+    this.bandTangent = 0;
   }
 }
 type('uint8')(PuckState.prototype, 'id');
@@ -35,6 +37,8 @@ type('float32')(PuckState.prototype, 'launchCx');
 type('float32')(PuckState.prototype, 'launchPx');
 type('float32')(PuckState.prototype, 'launchPy');
 type('int8')(PuckState.prototype, 'launchSide');
+type('int8')(PuckState.prototype, 'bandSide');
+type('float32')(PuckState.prototype, 'bandTangent');
 
 export class AimState extends Schema {
   constructor() {

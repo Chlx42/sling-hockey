@@ -30,7 +30,7 @@ test('滑动与旋转持续衰减，保留半秒后的惯性', (t) => {
     assert.ok(energy <= previous + 1e-6, '无外力时不能凭空增加能量');
     previous = energy;
   }
-  assert.ok(body.linvel().x > 4.5 && body.linvel().x < 6);
+  assert.ok(body.linvel().x > 3.5 && body.linvel().x < 4.5);
   assert.ok(body.angvel() > 2 && body.angvel() < 4);
   steps(w, 1200);
   assert.ok(w.isSettled());
