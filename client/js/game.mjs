@@ -4,7 +4,8 @@
 // 网络层通过 Colyseus SDK 对接权威服务器
 // 重建：python3 deploy/build-game.py
 import * as T3 from '../vendor/three-orig.js';
-import { islandMenu } from './island-ui.mjs';
+import { TableAudio, contactSoundKey } from './table-audio.mjs?v=1';
+import { islandMenu, islandHelp } from './island-ui.mjs?v=4';
 import { LocalPrediction } from './prediction.mjs?v=3';
 import { n as e, t } from '../vendor/colyseus-orig.js';
 import * as n from '@dimforge/rapier2d-compat';
@@ -1408,6 +1409,16 @@ var Bt = Math.PI / 180,
       robustSamples: 4,
       sloppiness: 0,
     },
+    extreme: {
+      label: `极限`,
+      angleSigma: 0.12 * Bt,
+      powerSigma: 0.006,
+      budgetMs: 120,
+      robustTop: 3,
+      robustSamples: 2,
+      sloppiness: 0,
+      precise: true,
+    },
   },
   Ht = 1.5,
   Ut = Oe,
@@ -1485,7 +1496,7 @@ function Xt(e, t) {
   return i;
 }
 var Zt = 60;
-function* Qt(e, t, n, r) {
+function* Qt(e, t, n, r, yieldSteps = Zt) {
   let i = t.filter((e) => e.id !== r.puckId),
     a = ct(n, r.cx, r.px, r.py, i);
   if (!a.ok) return null;
@@ -1496,7 +1507,7 @@ function* Qt(e, t, n, r) {
     if ((e.step(), e.isSettled())) {
       if (++s >= 8) break;
     } else s = 0;
-    (t + 1) % Zt === 0 && (yield t);
+    (t + 1) % yieldSteps === 0 && (yield t);
   }
   e.stopAll();
   let c = e.snapshot();
@@ -1515,18 +1526,20 @@ function* tn(e, t, n, r = Math.random, i = {}) {
     d = 0,
     f = function* (e) {
       ((e.cx = F(e.cx, -8, 8)), (e.pull = F(e.pull, Ee, O)));
-      let n = yield* Qt(c, o, t, B(t, e));
+      let result = yield* Qt(c, o, t, B(t, e), n.precise ? 20 : Zt);
       return (
         d++,
-        n ? ((e.score = n.score + (r() - 0.5) * 0.5), u.push(e), e) : null
+        result ? ((e.score = result.score + (r() - 0.5) * 0.5), u.push(e), e) : null
       );
     };
   try {
     let e = Wt + Wt / Pe,
       i = [],
       p = [0, -1.5, 1.5, -3, 3, -4.5, 4.5, -6, 6, -7.5, 7.5];
+    // 极限先比较两种力度，既能快速穿门，也能避免满力撞回己方。
     for (let e of p)
-      i.push({ cx: e, target: 0, tag: `direct`, pull: 0.82 * O });
+      for (let power of n.precise ? [0.9, 0.65] : [0.82])
+        i.push({ cx: e, target: 0, tag: `direct`, pull: power * O });
     for (let t of p)
       (i.push({ cx: t, target: -e, tag: `bankL`, pull: O }),
         i.push({ cx: t, target: e, tag: `bankR`, pull: O }));
@@ -1547,7 +1560,7 @@ function* tn(e, t, n, r = Math.random, i = {}) {
       )
         break;
     }
-    for (let e = 0; e < 5 && a() - l < n.budgetMs * 0.6; e++) {
+    for (let e = 0; e < (n.precise ? 0 : 5) && a() - l < n.budgetMs * 0.6; e++) {
       let e = (r() * 2 - 1) * 8;
       (yield* f({
         puckId: Yt(o, t, e, 0, s),
@@ -1559,16 +1572,16 @@ function* tn(e, t, n, r = Math.random, i = {}) {
       }),
         yield d);
     }
-    let m = [...u].sort((e, t) => t.score - e.score).slice(0, 5),
+    let m = [...u].sort((e, t) => t.score - e.score).slice(0, n.precise ? 3 : 5),
       h = [];
     for (let e of m) {
-      for (let t of [-0.02, 0.02, -0.05, 0.05])
+      for (let t of n.precise ? [-0.01, 0.01, -0.025, 0.025] : [-0.02, 0.02, -0.05, 0.05])
         h.push({ ...e, psi: e.psi + t, tag: e.tag + `~a` });
-      for (let t of [-0.15, 0.12])
+      for (let t of n.precise ? [-0.08, 0.08] : [-0.15, 0.12])
         h.push({ ...e, pull: e.pull * (1 + t), tag: e.tag + `~p` });
     }
     for (let e of h) {
-      if (a() - l > n.budgetMs) break;
+      if (a() - l > n.budgetMs * (n.precise ? 0.8 : 1)) break;
       (yield* f(e), yield d);
     }
     let g = [...u].sort((e, t) => t.score - e.score),
@@ -1585,14 +1598,16 @@ function* tn(e, t, n, r = Math.random, i = {}) {
     else if (n.robustTop > 0 && n.robustSamples > 0) {
       let e = -1 / 0;
       for (let i of g.slice(0, n.robustTop)) {
-        let a = i.score,
+        // 留出稳健性验证的预算；同一候选完成全部样本后才比较均分。
+        if (n.precise && a() - l >= n.budgetMs) break;
+        let total = i.score,
           s = 1;
         for (let e = 0; e < n.robustSamples; e++) {
-          let e = yield* Qt(c, o, t, B(t, nn(t, i, n, r)));
-          (d++, yield d, (a += e ? e.score : -1e3), s++);
+          let e = yield* Qt(c, o, t, B(t, nn(t, i, n, r)), n.precise ? 20 : Zt);
+          (d++, yield d, (total += e ? e.score : -1e3), s++);
         }
-        let l = a / s;
-        l > e && ((e = l), (_ = i));
+        let average = total / s;
+        average > e && ((e = average), (_ = i));
       }
     }
     n.sloppiness > 0 &&
@@ -1942,6 +1957,7 @@ var _n = class {
     easy: { react: [1.8, 3.2], anim: 1.35 },
     normal: { react: [0.9, 1.7], anim: 1 },
     hard: { react: [0.5, 1.1], anim: 0.82 },
+    extreme: { react: [0.12, 0.28], anim: 0.4 },
   },
   yn = (e) => (e < 0.5 ? 2 * e * e : 1 - (-2 * e + 2) ** 2 / 2),
   bn = class {
@@ -1952,6 +1968,7 @@ var _n = class {
     aim = null;
     phase = `off`;
     gen = null;
+    searchClock = null;
     plan = null;
     t = 0;
     wait = 0;
@@ -1981,6 +1998,7 @@ var _n = class {
     stop() {
       (this.gen?.return(null),
         (this.gen = null),
+        (this.searchClock = null),
         (this.phase = `off`),
         (this.aim = null));
     }
@@ -2001,8 +2019,13 @@ var _n = class {
             let e = this.host,
               t = Vt[this.level],
               n = e.overtime() ? { ...t, angleSigma: t.angleSigma * Ht } : t;
+            // 极限的预算只计实际执行时间，帧间等待不消耗弹道搜索机会。
+            const clock = this.searchClock = n.precise
+              ? { spent: 0, started: 0, running: false } : null;
             ((this.gen = tn(e.pucks(), this.side, n, Math.random, {
               canUse: (t) => e.canGrab(t),
+              ...(clock ? { now: () => clock.spent +
+                (clock.running ? performance.now() - clock.started : 0) } : {}),
             })),
               (this.plan = null),
               (this.phase = `think`),
@@ -2011,13 +2034,19 @@ var _n = class {
           return;
         case `think`: {
           if (this.gen) {
-            let e = performance.now() + this.budgetMsPerFrame;
-            for (; performance.now() < e;) {
-              let e = this.gen.next();
-              if (e.done) {
-                ((this.plan = e.value), (this.gen = null));
-                break;
+            const clock = this.searchClock;
+            let started = performance.now(), deadline = started + this.budgetMsPerFrame;
+            if (clock) { clock.started = started; clock.running = true; }
+            try {
+              for (; performance.now() < deadline;) {
+                let e = this.gen.next();
+                if (e.done) {
+                  ((this.plan = e.value), (this.gen = null));
+                  break;
+                }
               }
+            } finally {
+              if (clock) { clock.spent += performance.now() - started; clock.running = false; }
             }
           }
           if (this.gen) return;
@@ -2205,12 +2234,13 @@ var _n = class {
     }
   },
   Dn = `sling.settings`,
-  On = { guide: !0, overtimeNoGuide: !0 };
+  On = { guide: !0, overtimeNoGuide: !0, highQuality: !0 };
 function kn() {
   try {
     let e = JSON.parse(localStorage.getItem(Dn) ?? `{}`);
     return {
       guide: typeof e.guide == `boolean` ? e.guide : On.guide,
+      highQuality: typeof e.highQuality == `boolean` ? e.highQuality : On.highQuality,
       overtimeNoGuide:
         typeof e.overtimeNoGuide == `boolean`
           ? e.overtimeNoGuide
@@ -2282,7 +2312,7 @@ function zn(e, t, n) {
 function Bn(e, t, n = !0) {
   if ((t.k !== `launch` && e.scene.impact(t.k, t.x, t.y, t.v), !n)) return;
   let r = zn(e.scene, t.x, t.y);
-  t.k === `launch` ? e.sfx.launch(t.v, r) : e.sfx.hit(t.k, t.v, r);
+  t.k === `launch` ? e.sfx.launch(t.v, r) : e.sfx.hit(t.k, t.v, r, contactSoundKey(t));
 }
 function Vn(e) {
   let t = Math.max(0, Math.round(e / 1e3));
@@ -2294,9 +2324,8 @@ var Hn = {
     not_your_half: `只能拿自己半场的冰球`,
     held: `这枚球正被拿着`,
   },
-  Un = `实时对战，随时出手！
-按住自己半场的冰球 → 压上弹力带往后拉 → 松手发射
-先清空自己半场的一方获胜`,
+  Un = `按住冰球 → 压带后拉 → 松手发射
+先清空自己的半场，就赢了`,
   Wn = class {
     ctx;
     kind;
@@ -2752,9 +2781,8 @@ var Yn = class {
   Xn = 100,
   Zn = [`puck`, `wall`, `divider`, `band`, `launch`],
   Qn = 60,
-  $n = `实时对战，随时出手！
-按住自己半场的冰球 → 压上弹力带往后拉 → 松手发射
-先清空自己半场的一方获胜`,
+  $n = `按住冰球 → 压带后拉 → 松手发射
+先清空自己的半场，就赢了`,
   er = (e, t, n) => {
     let r = t - e;
     for (; r > Math.PI;) r -= Math.PI * 2;
@@ -3415,9 +3443,9 @@ var Yn = class {
               ]
             : [
                 {
-                  label: `等待好友再来一局`,
+                  label: `重新邀请好友`,
                   icon: `link`,
-                  onClick: () => this.room.send(`rematch`),
+                  onClick: () => this.ctx.inviteFriend(),
                 },
                 {
                   label: `返回主菜单`,
@@ -3523,7 +3551,9 @@ var Yn = class {
               ? c
                 ? `瞄准中…`
                 : `在线`
-              : `断线 ${s.reconnectLeft}s`
+              : i === `over`
+                ? `已离开`
+                : `断线 ${s.reconnectLeft}s`
             : `已离开`,
           count: P(n, j(a)),
           active: c,
@@ -3568,7 +3598,7 @@ var Yn = class {
               icon: `exit`,
               onClick: () => this.ctx.exit(),
             },
-          ]))
+          ], () => this.ctx.ui.show(null)))
         : this.ctx.exit();
     }
     grabbable(e) {
@@ -3710,6 +3740,7 @@ var Yn = class {
       dots: 2,
     },
     { id: `hard`, name: `困难`, desc: `出手快、算得准，很少失误`, dots: 3 },
+    { id: `extreme`, name: `极限`, desc: `极速出手、精密瞄准，几乎不给喘息`, dots: 4 },
   ];
 function K(e) {
   return e.replace(
@@ -3744,6 +3775,8 @@ var ir = class {
     h;
     screens = new Map();
     current = null;
+    screenFocus = new Map();
+    dialogEscape = null;
     level = `normal`;
     toastTimer = 0;
     hudEl;
@@ -3775,11 +3808,12 @@ var ir = class {
       ((this.root = e),
         (this.sfx = t),
         (this.h = n),
-        (this.level = localStorage.getItem(`sling.level`) || `normal`),
+        (this.level = rr.some((level) => level.id === localStorage.getItem(`sling.level`))
+          ? localStorage.getItem(`sling.level`) : `normal`),
         (e.innerHTML = this.template()));
       for (let t of e.querySelectorAll(`.screen`))
         this.screens.set(t.dataset.screen, t);
-      (this.bindMenu(), this.bindHud());
+      (this.bindMenu(), this.bindHud(), this.bindScreenKeys());
     }
     get name() {
       return q(J(this.root, `#nick`).value) || this.defaultName();
@@ -3797,7 +3831,7 @@ var ir = class {
       let e = rr
         .map(
           (e) => `<button class="level" data-level="${e.id}">
-        <span class="dots">${[1, 2, 3].map((t) => `<i class="${t <= e.dots ? `on` : ``}"></i>`).join(``)}</span>
+        <span class="dots">${[1, 2, 3, 4].map((t) => `<i class="${t <= e.dots ? `on` : ``}"></i>`).join(``)}</span>
         <span><div class="t">${e.name}</div><div class="d">${e.desc}</div></span>
         <span class="check"></span>
       </button>`,
@@ -3820,11 +3854,15 @@ var ir = class {
       <div class="panel">
         <button class="icon-btn back" data-act="back" aria-label="返回" style="background:rgba(0,0,0,.06);color:var(--ink)">${G.back}</button>
         <h2 style="text-align:center">好友对战</h2>
-        <p class="sub" style="text-align:center">创建房间后把邀请链接发给好友，对方打开即可加入</p>
+        <p class="sub" style="text-align:center">开一张双人球桌，或加入好友的房间。</p>
         <div class="stack">
           <button class="btn btn-primary" data-act="create-room">${G.link}创建房间</button>
-          <div class="field"><label for="room-code">房间号</label><input id="room-code" maxlength="32" autocomplete="off" spellcheck="false" placeholder="输入好友的房间号"></div>
-          <button class="btn btn-wood" data-act="join-room">加入房间</button>
+          <div class="friend-divider">已有好友邀请？</div>
+          <form id="friend-join" class="stack" novalidate>
+            <div class="field"><label for="room-code">加入好友</label><input id="room-code" maxlength="2048" autocomplete="off" autocapitalize="none" spellcheck="false" enterkeyhint="go" aria-describedby="room-code-error" placeholder="粘贴邀请链接或输入房间号"></div>
+            <p id="room-code-error" class="field-error" role="alert" hidden></p>
+            <button class="btn btn-wood" type="submit" data-act="join-room">加入房间</button>
+          </form>
         </div>
       </div>
     </section>
@@ -3848,15 +3886,7 @@ var ir = class {
     <section class="screen" data-screen="help">
       <div class="panel">
         <button class="icon-btn back" data-act="back" aria-label="返回" style="background:rgba(0,0,0,.06);color:var(--ink)">${G.back}</button>
-        <h2 style="text-align:center;margin-bottom:14px">玩法说明</h2>
-        <ul class="rules">
-          <li><i>1</i><span>棋盘中间的隔板上有一个略宽于冰球的小洞，两端各有一条弹力带。开局每边 5 枚冰球。</span></li>
-          <li><i>2</i><span><b>实时对战，不分回合</b>：双方随时出手，比谁又快又准。<b>颜色不代表归属</b>，落在你半场的冰球都由你操作。</span></li>
-          <li><i>3</i><span>按住自己半场里停下（或慢慢滑动）的冰球，拖向弹力带，压上带子后往后拉，松手发射。一次只能拿一枚。</span></li>
-          <li><i>4</i><span>像弹弓一样：正后方拉直射，往右后方拉就往左前方斜射。手指往侧面挪一点，方向就跟着变一点；冰球拉满后手指还能继续往后拉，拉得越远，方向调得越细。拉伸距离决定力度。</span></li>
-          <li><i>5</i><span><b>先把自己半场清空的一方获胜</b>；常规时间 3 分钟，时间到时半场剩余较少的一方获胜。剩余相同进入 60 秒<b>加时赛</b>：先领先的一方获胜（默认关闭辅助线，可在设置中调整）。</span></li>
-          <li><i>6</i><span>电脑上按 Esc 或右键可以取消当前瞄准；人机对战中按 Esc 暂停。</span></li>
-        </ul>
+        ${islandHelp()}
         <div class="stack" style="margin-top:18px"><button class="btn btn-wood" data-act="back">知道了</button></div>
       </div>
     </section>
@@ -3864,9 +3894,17 @@ var ir = class {
     <section class="screen" data-screen="settings">
       <div class="panel">
         <button class="icon-btn back" data-act="back" aria-label="返回" style="background:rgba(0,0,0,.06);color:var(--ink)">${G.back}</button>
-        <h2 style="text-align:center">小岛设置</h2>
-        <p class="sub" style="text-align:center">关掉辅助线，全凭手感瞄准，挑战更高难度</p>
+        <h2 style="text-align:center">小木桌设置</h2>
+        <p class="sub" style="text-align:center">把画面、声音和手感，调成你喜欢的样子</p>
         <div class="settings">
+          <label class="setting">
+            <span class="txt"><b>高清棋盘</b><small>让棋子边缘、木纹和阴影更清楚。设备发热或不够流畅时，可以关闭</small></span>
+            <input type="checkbox" class="switch" data-set="highQuality">
+          </label>
+          <label class="setting">
+            <span class="txt"><b>游戏声音</b><small>木球碰撞、弹力带与对局提示音</small></span>
+            <input type="checkbox" class="switch" data-set="sound">
+          </label>
           <label class="setting">
             <span class="txt"><b>瞄准辅助线</b><small>拉伸时显示发射方向与力度的预测虚线。关闭后双方的虚线都不显示，力度条保留</small></span>
             <input type="checkbox" class="switch" data-set="guide">
@@ -3912,8 +3950,8 @@ var ir = class {
       <div class="ping"></div>
       <svg class="guide-path" aria-hidden="true"><polyline points=""/><circle r="5"/></svg>
       <div class="guide-hand"><span class="ripple"></span><svg viewBox="0 0 48 48" aria-hidden="true"><path d="M15.5 9.5a3.5 3.5 0 0 1 7 0v13.2l9.8 2.3a4 4 0 0 1 3 4.5l-1.5 9.3a4 4 0 0 1-4 3.3H20.6a4 4 0 0 1-3-1.4l-8.5-9.7a2.9 2.9 0 0 1 4.1-4.1l2.3 2.1z"/></svg></div>
-      <div class="toast"></div>
-    </div>`;
+    </div>
+    <div class="toast" role="status" aria-live="polite" aria-atomic="true"></div>`;
     }
     bindMenu() {
       let e = this.root,
@@ -3944,6 +3982,11 @@ var ir = class {
               case `help`:
                 this.show(`help`);
                 break;
+              case `chlx-note`:
+                this.showDialog(`Chlx`, `天天开心 :3`,
+                  [{ label: `行`, kind: `wood`, onClick: () => this.show(`menu`) }],
+                  () => this.show(`menu`));
+                break;
               case `settings`:
                 (this.refreshSettings(), this.show(`settings`));
                 break;
@@ -3965,24 +4008,45 @@ var ir = class {
                   ),
                   this.refreshSound());
                 break;
+              case `quick-play`:
               case `start-ai`:
                 this.h.onLocal(this.level);
                 break;
               case `create-room`:
                 this.h.onCreateFriend();
                 break;
-              case `join-room`: {
-                let t = this.parseRoomCode(J(e, `#room-code`).value);
-                t
-                  ? this.h.onJoinFriend(t)
-                  : this.toast(`请输入房间号或邀请链接`);
+              case `join-room`:
+                // The form handles both clicking and the keyboard's Enter key.
                 break;
-              }
               case `hud-menu`:
                 this.h.onMenuButton();
             }
         }));
-      for (let t of e.querySelectorAll(`.level`))
+      const roomInput = J(e, `#room-code`), roomError = J(e, `#room-code-error`);
+      roomInput.addEventListener(`input`, () => {
+        roomInput.removeAttribute(`aria-invalid`);
+        roomError.hidden = true;
+        roomError.textContent = ``;
+      });
+      roomInput.addEventListener(`keydown`, (event) => {
+        if (event.key === `Enter` && event.isComposing) event.preventDefault();
+      });
+      J(e, `#friend-join`).addEventListener(`submit`, (event) => {
+        event.preventDefault();
+        this.sfx.unlock();
+        const room = this.parseRoomCode(roomInput.value);
+        if (!room) {
+          roomError.textContent = roomInput.value.trim()
+            ? `这段内容不是有效的房间号或邀请链接，请确认后重试。`
+            : `请输入好友的房间号，或粘贴完整邀请链接。`;
+          roomError.hidden = false;
+          roomInput.setAttribute(`aria-invalid`, `true`);
+          roomInput.focus();
+          return;
+        }
+        this.h.onJoinFriend(room);
+      });
+      for (let t of e.querySelectorAll(`[data-level]`))
         t.addEventListener(`click`, () => {
           ((this.level = t.dataset.level),
             localStorage.setItem(`sling.level`, this.level),
@@ -3990,16 +4054,33 @@ var ir = class {
         });
       for (let t of e.querySelectorAll(`[data-set]`))
         t.addEventListener(`change`, () => {
-          (An({ [t.dataset.set]: t.checked }), this.refreshSettings());
+          if (t.dataset.set === `sound`) {
+            this.sfx.unlock();
+            this.sfx.setEnabled(t.checked);
+            localStorage.setItem(`sling.sound`, t.checked ? `1` : `0`);
+            this.refreshSound();
+          } else An({ [t.dataset.set]: t.checked });
+          if (t.dataset.set === `highQuality`) this.h.onQualityChange();
+          this.refreshSettings();
         });
-      for (let t of e.querySelectorAll(`[data-period]`))
+      for (let t of e.querySelectorAll(`[data-period]`)) {
         t.addEventListener(`click`, () => this.loadBoard(t.dataset.period));
+        t.addEventListener(`keydown`, (event) => {
+          if (![`ArrowLeft`, `ArrowRight`, `Home`, `End`].includes(event.key)) return;
+          event.preventDefault();
+          const tabs = [...e.querySelectorAll(`[data-period]`)];
+          const index = event.key === `Home` ? 0 : event.key === `End` ? tabs.length - 1
+            : (tabs.indexOf(t) + (event.key === `ArrowLeft` ? -1 : 1) + tabs.length) % tabs.length;
+          tabs[index].focus();
+          this.loadBoard(tabs[index].dataset.period);
+        });
+      }
       (this.refreshLevels(), this.refreshSound(), this.refreshSettings());
     }
     refreshSettings() {
       for (let e of this.root.querySelectorAll(`[data-set]`)) {
         let t = e.dataset.set;
-        e.checked = U[t];
+        e.checked = t === `sound` ? this.sfx.enabled : U[t];
         let n = t === `overtimeNoGuide` && !U.guide;
         ((e.disabled = n), e.closest(`.setting`)?.classList.toggle(`muted`, n));
       }
@@ -4012,6 +4093,7 @@ var ir = class {
         let n = t.dataset.period === e;
         (t.classList.toggle(`on`, n),
           t.setAttribute(`aria-selected`, String(n)));
+        t.tabIndex = n ? 0 : -1;
       }
       let r = J(n, `.board-body`),
         i = J(n, `.board-me`);
@@ -4066,22 +4148,34 @@ var ir = class {
     parseRoomCode(e) {
       let t = e.trim();
       if (!t) return null;
+      const valid = (value) => /^[A-Za-z0-9_-]{4,32}$/.test(value ?? ``);
+      if (valid(t)) return t;
       try {
-        let e = new URL(t).searchParams.get(`room`);
-        if (e) return e;
+        const url = new URL(t), room = url.searchParams.get(`room`);
+        if ([`http:`, `https:`].includes(url.protocol) && valid(room)) return room;
       } catch {}
-      let n = t.match(/[A-Za-z0-9_-]{4,32}/);
-      return n ? n[0] : null;
+      return null;
     }
     refreshLevels() {
-      for (let e of this.root.querySelectorAll(`.level`))
-        e.classList.toggle(`sel`, e.dataset.level === this.level);
+      for (let e of this.root.querySelectorAll(`[data-level]`)) {
+        const selected = e.dataset.level === this.level;
+        e.classList.toggle(`sel`, selected);
+        e.setAttribute(`aria-pressed`, String(selected));
+      }
+      const note = this.root.querySelector(`#quick-level-note`);
+      if (note) note.textContent = rr.find((level) => level.id === this.level)?.desc ?? ``;
     }
     refreshSound() {
+      const toggle = this.root.querySelector(`[data-set="sound"]`);
+      if (toggle) toggle.checked = this.sfx.enabled;
       for (let e of this.root.querySelectorAll(`.snd`))
         e.innerHTML = this.sfx.enabled ? G.soundOn : G.soundOff;
       for (let e of this.root.querySelectorAll(`.snd-t`))
         e.textContent = this.sfx.enabled ? `声音：开` : `声音：关`;
+      for (let e of this.root.querySelectorAll(`[data-act="sound"], [data-act="hud-sound"]`)) {
+        e.setAttribute(`aria-pressed`, String(this.sfx.enabled));
+        e.setAttribute(`aria-label`, this.sfx.enabled ? `关闭声音` : `开启声音`);
+      }
     }
     bindHud() {
       let e = this.root;
@@ -4100,11 +4194,78 @@ var ir = class {
         (this.pingEl = J(e, `.ping`)),
         (this.streakEl = J(e, `.streak`)));
     }
+    bindScreenKeys() {
+      window.addEventListener(`keydown`, (event) => {
+        if (event.defaultPrevented || event.isComposing || !this.current) return;
+        if (event.key === `Escape`) {
+          if ([`ai`, `friend`, `help`, `settings`, `board`].includes(this.current)) {
+            event.preventDefault();
+            this.show(`menu`);
+          } else if (this.current === `dialog` && this.dialogEscape) {
+            event.preventDefault();
+            this.dialogEscape();
+          }
+          return;
+        }
+        if (event.key !== `Tab`) return;
+        const screen = this.screens.get(this.current);
+        const controls = [...screen.querySelectorAll(`button, input, select, textarea, summary, a[href], [tabindex]`)]
+          .filter((node) => !node.disabled && node.tabIndex >= 0 && node.getClientRects().length);
+        const first = controls[0], last = controls.at(-1), active = document.activeElement;
+        if (!first) {
+          event.preventDefault();
+          this.focusScreen(screen);
+        } else if (event.shiftKey && (active === first || !controls.includes(active))) {
+          event.preventDefault();
+          last.focus();
+        } else if (!event.shiftKey && (active === last || !controls.includes(active))) {
+          event.preventDefault();
+          first.focus();
+        }
+      });
+    }
+    focusScreen(screen) {
+      const previous = this.screenFocus.get(this.current);
+      const target = previous && screen.contains(previous) && !previous.disabled && previous.getClientRects().length
+        ? previous : screen.querySelector(`h1, h2, .big`)
+          ?? screen.querySelector(`button:not(:disabled), input:not(:disabled)`);
+      const focus = target ?? screen;
+      if (!focus.matches(`button, input, select, textarea, summary, a[href], [tabindex]`)) focus.tabIndex = -1;
+      focus.focus({ preventScroll: true });
+    }
     show(e) {
-      if (this.current !== e) {
+      const changed = this.current !== e;
+      if (changed) {
+        const active = document.activeElement;
+        if (active && this.root.contains(active)) {
+          this.screenFocus.set(this.current, active);
+          active.blur();
+        }
         window.clearInterval(this.waitTimer);
-        for (let [t, n] of this.screens) n.classList.toggle(`on`, t === e);
+        for (let [t, n] of this.screens) {
+          n.classList.toggle(`on`, t === e);
+          n.inert = t !== e;
+          n.setAttribute(`aria-hidden`, String(t !== e));
+        }
         this.current = e;
+        if (e !== `dialog`) this.dialogEscape = null;
+      }
+      this.hudEl.inert = e !== null;
+      const screen = this.screens.get(e);
+      if (screen && e !== `menu`) {
+        screen.setAttribute(`role`, `dialog`);
+        screen.setAttribute(`aria-modal`, `true`);
+        screen.setAttribute(`aria-label`, screen.querySelector(`h2, .big, .tag`)?.textContent ?? `对局信息`);
+      }
+      if (screen && (changed || !screen.contains(document.activeElement)))
+        requestAnimationFrame(() => {
+          if (this.current === e) this.focusScreen(screen);
+        });
+      else if (changed && e === null) {
+        const previous = this.screenFocus.get(null);
+        if (previous?.isConnected && !previous.disabled && previous.getClientRects().length)
+          previous.focus({ preventScroll: true });
+        else document.activeElement?.blur();
       }
     }
     get screen() {
@@ -4133,12 +4294,13 @@ var ir = class {
       let r = J(e, `.nm`);
       r.textContent !== t.name && (r.textContent = t.name);
       let i = J(e, `.st`),
-        a = t.sub ?? ``;
+        a = n === 0 && t.sub === `你` ? `你的半场` : t.sub ?? ``;
       (i.textContent !== a && (i.textContent = a),
         (i.style.display = a ? `` : `none`));
       let o = J(e, `.cnt b`),
         s = String(t.count);
       o.textContent !== s && (o.textContent = s);
+      J(e, `.cnt`).setAttribute(`aria-label`, `${n === 0 ? `你的` : `对手的`}半场剩余 ${s} 枚冰球`);
       let c = this.lastCounts[n];
       if (c >= 0 && c !== t.count) {
         let r = t.count - c;
@@ -4335,18 +4497,33 @@ var ir = class {
       <div class="big">等待好友加入…</div>
       <div class="mono">房间号</div>
       <div class="room-code">${K(e)}</div>
-      <div class="link-box"><input readonly value="${K(t)}"><button class="btn btn-wood btn-small" data-x="copy">${G.copy}复制</button></div>
+      <div class="link-box"><input readonly aria-label="好友邀请链接" value="${K(t)}"><button class="btn btn-wood btn-small" data-x="copy">${G.copy}复制链接</button></div>
+      <p class="invite-feedback" role="status" aria-live="polite"></p>
       <div class="stack" style="width:100%;margin-top:4px">
         ${i ? `<button class="btn btn-primary" data-x="share">${G.share}发送给好友</button>` : ``}
         <button class="btn btn-ghost" data-x="cancel">取消</button>
       </div>`;
+      const inviteFeedback = J(r, `.invite-feedback`);
       let a = async () => {
+        const input = J(r, `input`), button = J(r, `[data-x="copy"]`);
+        let copied = false;
         try {
-          (await navigator.clipboard.writeText(t), this.toast(`链接已复制`));
+          await navigator.clipboard.writeText(t);
+          copied = true;
         } catch {
-          (J(r, `input`).select(),
-            document.execCommand(`copy`),
-            this.toast(`链接已复制`));
+          input.focus();
+          input.select();
+          try { copied = document.execCommand(`copy`); } catch {}
+        }
+        if (!button.isConnected || this.current !== `wait`) return;
+        if (copied) {
+          inviteFeedback.textContent = `链接已复制，发给好友就能加入。`;
+          button.innerHTML = `${G.copy}已复制`;
+          this.toast(`邀请链接已复制`);
+        } else {
+          inviteFeedback.textContent = `未能自动复制，请手动复制已选中的链接。`;
+          button.innerHTML = `${G.copy}复制链接`;
+          this.toast(`复制未成功，请手动复制链接`);
         }
       };
       (r.querySelectorAll(`[data-x]`).forEach((e) => {
@@ -4361,7 +4538,10 @@ var ir = class {
                     text: `来和我玩一局弹射冰球！`,
                     url: t,
                   })
-                  .catch(() => {})
+                  .catch((error) => {
+                    if (error?.name !== `AbortError`)
+                      inviteFeedback.textContent = `暂时无法分享，请复制链接发送给好友。`;
+                  })
               : n();
         };
       }),
@@ -4504,11 +4684,18 @@ var ir = class {
         r = n.querySelector(`.status`);
       if ((r && r.textContent !== e && (r.textContent = e), t)) {
         let e = J(n, `.stack`);
+        const focused = e.contains(document.activeElement) ? document.activeElement.dataset.i : null;
         ((e.innerHTML = this.buttons(t)), this.wire(e, t));
+        if (focused != null) {
+          const next = e.querySelector(`button[data-i="${focused}"]:not(:disabled)`)
+            ?? e.querySelector(`button:not(:disabled)`);
+          next?.focus({ preventScroll: true });
+        }
       }
     }
-    showDialog(e, t, n) {
+    showDialog(e, t, n, onEscape = null) {
       let r = J(this.screens.get(`dialog`), `.panel`);
+      this.dialogEscape = onEscape;
       ((r.innerHTML = `<h2>${K(e)}</h2><p class="sub">${K(t)}</p><div class="stack">${this.buttons(n)}</div>`),
         this.wire(r, n),
         this.show(`dialog`));
@@ -4541,6 +4728,7 @@ var ir = class {
           onCreateFriend: () => this.createFriendRoom(),
           onJoinFriend: (e) => this.joinFriendRoom(e),
           onMenuButton: () => this.match?.onMenu(),
+          onQualityChange: () => this.scene.resize(this.scene.width, this.scene.height),
           loadBoard: (e) => Jn(e),
         })),
         (this.ctx = {
@@ -4550,6 +4738,7 @@ var ir = class {
           canvas: n,
           exit: () => this.showMenu(),
           requeue: () => this.startMatchmaking(),
+          inviteFriend: () => this.createFriendRoom(),
         }));
     }
     getNet() {
@@ -4617,7 +4806,7 @@ var ir = class {
           ),
         );
       } catch (e) {
-        this.netError(e);
+        this.netError(e, () => this.startMatchmaking());
         return;
       }
       ((this.ticket = r),
@@ -4628,7 +4817,7 @@ var ir = class {
               : t.leave();
           },
           (t) => {
-            e === this.flow && this.netError(t);
+            e === this.flow && this.netError(t, () => this.startMatchmaking());
           },
         ));
     }
@@ -4648,7 +4837,7 @@ var ir = class {
               if (e !== this.flow) return void t.leave();
               this.enterOnline(t, `friend`);
             },
-            (t) => e === this.flow && this.netError(t),
+            (t) => e === this.flow && this.netError(t, () => this.createFriendRoom(), `friend`),
           ));
     }
     joinFriendRoom(e) {
@@ -4668,32 +4857,36 @@ var ir = class {
               if (t !== this.flow) return void e.leave();
               this.enterOnline(e, `friend`);
             },
-            (e) => {
+            (error) => {
               if (t !== this.flow) return;
-              let n = String(e?.message ?? e),
-                r = /locked|full/i.test(n);
-              this.ui.showDialog(
-                r ? `房间已满` : `无法加入房间`,
-                r
-                  ? `这个房间里的对局已经开始了。`
-                  : `房间不存在或已解散，请确认邀请链接。`,
-                [{ label: `返回主菜单`, onClick: () => this.showMenu() }],
-              );
+              const message = String(error?.message ?? error);
+              const full = /locked|full/i.test(message);
+              const missing = /not found|not exist|not available/i.test(message);
+              this.netError(error, () => this.joinFriendRoom(e), `friend`,
+                full ? `房间暂时无法加入` : missing ? `没有找到这个房间` : `暂时无法加入好友房间`,
+                full ? `房间已满或对局已经开始，请让好友重新邀请你。`
+                  : missing ? `房间可能已解散，请确认房间号，或向好友索取新链接。`
+                  : `请检查网络后重试，也可以返回确认邀请链接。`);
             },
           ));
     }
     enterOnline(e, t) {
       (this.stopDemo(), (this.match = new tr(this.ctx, e, t)));
     }
-    netError(e) {
-      (console.warn(e),
-        this.ui.showDialog(
-          `无法连接服务器`,
-          `请确认联机服务器已启动（npm run dev 或 npm start），然后重试。`,
-          [{ label: `返回主菜单`, onClick: () => this.showMenu() }],
-        ));
+    netError(e, retry, entry = `menu`, title = `暂时连不上服务器`, message = `请检查网络连接，稍后再试。你也可以回首页先玩一局人机对战。`) {
+      console.warn(e);
+      const back = () => {
+        this.showMenu();
+        if (entry !== `menu`) this.ui.show(entry);
+      };
+      const buttons = [];
+      if (retry) buttons.push({ label: `重试`, icon: `restart`, onClick: retry });
+      buttons.push({ label: entry === `friend` ? `返回好友对战` : `返回主菜单`, kind: `ghost`, onClick: back });
+      this.ui.showDialog(title, message, buttons, back);
     }
     frame(e) {
+      // The opaque clubhouse needs no hidden AI simulation or WebGL frames.
+      if (this.ui.screen === `menu`) return;
       let t = this.match ?? this.demo,
         n = t ? t.update(e) : { pucks: [] };
       ((this.shownAims = n.aims?.length ?? 0), this.scene.frame(e, n));
@@ -4767,6 +4960,7 @@ var ir = class {
     ctx = null;
     master = null;
     noise = null;
+    table = null;
     last = new Map();
     voices = [];
     _enabled = !0;
@@ -4780,15 +4974,29 @@ var ir = class {
         if (!e) return;
         let t = new e(),
           n = t.createDynamicsCompressor();
-        ((n.threshold.value = -14), (n.knee.value = 10), (n.ratio.value = 5));
+        ((n.threshold.value = -12), (n.knee.value = 6), (n.ratio.value = 6),
+          (n.attack.value = 0.002), (n.release.value = 0.08));
+        // Compression can miss a simultaneous impact's first transient. Keep
+        // ordinary hits linear, softly bound only dense peaks before the output.
+        const headroom = t.createGain(), limiter = t.createWaveShaper();
+        headroom.gain.value = 0.25;
+        const curve = new Float32Array(4097);
+        for (let i = 0; i < curve.length; i++) {
+          const x = 4 * (2 * i / (curve.length - 1) - 1), magnitude = Math.abs(x);
+          curve[i] = magnitude <= 0.7 ? x
+            : Math.sign(x) * (0.7 + 0.25 * Math.tanh((magnitude - 0.7) / 0.25));
+        }
+        limiter.curve = curve;
+        limiter.oversample = `2x`;
         let r = t.createGain();
         ((r.gain.value = this._enabled ? 0.9 : 0),
-          r.connect(n).connect(t.destination));
+          r.connect(n).connect(headroom).connect(limiter).connect(t.destination));
         let i = Math.floor(t.sampleRate * 0.5),
           a = t.createBuffer(1, i, t.sampleRate),
           o = a.getChannelData(0);
         for (let e = 0; e < i; e++) o[e] = Math.random() * 2 - 1;
-        ((this.ctx = t), (this.master = r), (this.noise = a));
+        ((this.ctx = t), (this.master = r), (this.noise = a),
+          (this.table = new TableAudio(t, r)));
       }
       this.ctx.state === `suspended` && this.ctx.resume();
     }
@@ -4812,9 +5020,11 @@ var ir = class {
     }
     allow(e, t) {
       let n = performance.now();
+      // Contact keys include puck IDs. Keep their history bounded across matches.
+      for (const [key, at] of this.last) if (n - at > 1000) this.last.delete(key);
       return n - (this.last.get(e) ?? -1e9) < t ||
         ((this.voices = this.voices.filter((e) => n - e < 120)),
-        this.voices.length > 14)
+        this.voices.length >= 15)
         ? !1
         : (this.voices.push(n), this.last.set(e, n), !0);
     }
@@ -4858,79 +5068,32 @@ var ir = class {
         l.start(t),
         l.stop(t + a + 0.02));
     }
-    hit(e, t, n = 0) {
+    hit(e, t, n = 0, contact = e) {
       let r = this.ready();
       if (!r) return;
-      let i = Math.min(1, (Math.max(0, t) / 26) ** 0.8);
-      if (i < 0.04 || !this.allow(e, e === `puck` ? 28 : 40)) return;
-      let a = r.currentTime + 0.005,
-        o = this.out(0.25 + 0.75 * i, n),
-        s = 0.92 + Math.random() * 0.16;
-      switch (e) {
-        case `puck`:
-          (this.noiseBurst(
-            o,
-            a,
-            `bandpass`,
-            2200 * s,
-            1.7,
-            0.022,
-            0.9 * i + 0.1,
-          ),
-            this.tone(o, a, `sine`, 380 * s, 240 * s, 0.055, 0.4 * i + 0.05),
-            this.tone(o, a, `sine`, 1700 * s, 1200 * s, 0.028, 0.2 * i));
-          break;
-        case `wall`:
-          (this.noiseBurst(o, a, `bandpass`, 950 * s, 1.4, 0.045, 0.8 * i + 0.1),
-            this.tone(o, a, `sine`, 300 * s, 180 * s, 0.065, 0.5 * i + 0.05));
-          break;
-        case `divider`:
-          (this.noiseBurst(
-            o,
-            a,
-            `bandpass`,
-            1250 * s,
-            1.6,
-            0.035,
-            0.8 * i + 0.1,
-          ),
-            this.tone(o, a, `sine`, 560 * s, 360 * s, 0.06, 0.45 * i + 0.05));
-          break;
-        case `band`:
-          (this.noiseBurst(o, a, `lowpass`, 700, 0.8, 0.07, 0.6 * i + 0.1),
-            this.tone(o, a, `sine`, 160, 95, 0.11, 0.55 * i + 0.05));
-      }
+      let i = Math.min(1, Math.max(0, t) / MAX_SHOT_SPEED);
+      if (t < 0.3 || !this.allow(contact, e === `puck` ? 28 : 40)) return;
+      this.table.play(e, i, n, this.duck);
     }
     launch(e, t = 0) {
       let n = this.ready();
-      if (!n || !this.allow(`launch`, 60)) return;
-      let r = n.currentTime + 0.004,
-        i = this.out(0.5 + 0.5 * e, t);
-      (this.noiseBurst(i, r, `highpass`, 1800, 0.7, 0.03, 0.6 + 0.3 * e),
-        this.tone(i, r, `triangle`, 210 + e * 100, 90, 0.1 + e * 0.05, 0.5),
-        this.tone(i, r + 0.005, `sine`, 120 + e * 40, 65, 0.12, 0.35));
+      if (!n || !this.allow(`launch:${Math.round(t * 4)}`, 40)) return;
+      this.table.play(`launch`, 0.25 + 0.75 * e, t, this.duck);
     }
     stretch(e) {
       let t = this.ready();
-      if (!t || !this.allow(`stretch`, 45)) return;
-      let n = t.currentTime + 0.002,
-        r = this.out(0.12 + e * 0.18, 0);
-      this.noiseBurst(r, n, `bandpass`, 500 + e * 1500, 6, 0.04, 0.5);
+      if (!t || !this.allow(`stretch`, 55)) return;
+      this.table.play(`stretch`, 0.2 + 0.65 * e, 0, this.duck);
     }
     select() {
       let e = this.ready();
       if (!e || !this.allow(`select`, 60)) return;
-      let t = e.currentTime + 0.003,
-        n = this.out(0.35, 0);
-      (this.tone(n, t, `sine`, 980, 900, 0.06, 0.5),
-        this.noiseBurst(n, t, `bandpass`, 3e3, 2, 0.02, 0.3));
+      this.table.play(`puck`, 0.09, 0, this.duck);
     }
     putBack() {
       let e = this.ready();
       if (!e || !this.allow(`put`, 60)) return;
-      let t = e.currentTime + 0.003,
-        n = this.out(0.35, 0);
-      this.tone(n, t, `sine`, 700, 520, 0.09, 0.45);
+      this.table.play(`wall`, 0.18, 0, this.duck);
     }
     turn(e) {
       let t = this.ready();
@@ -5139,7 +5302,7 @@ function mr() {
     i = sr(42),
     a = (e) => (e + T) * 56,
     o = (e) => (E - e) * 56;
-  ((r.fillStyle = `#e6d5b0`), r.fillRect(0, 0, e, t));
+  ((r.fillStyle = `#f0e4c9`), r.fillRect(0, 0, e, t));
   for (let n = 0; n < 70; n++) {
     let n = i() * e,
       a = i() * t,
@@ -5197,10 +5360,10 @@ function mr() {
     ((r.textAlign = `center`),
       (r.textBaseline = `middle`),
       (r.fillStyle = c),
-      (r.font = `900 ${0.98 * 56}px "PingFang SC","Microsoft YaHei","Noto Sans SC",sans-serif`),
-      r.fillText(`小岛冰球`, 0, -12.32),
+      (r.font = `900 ${0.8 * 56}px "PingFang SC","Microsoft YaHei","Noto Sans SC",sans-serif`),
+      r.fillText(`广告位招租`, 0, -12.32),
       (r.font = `700 23.52px "Avenir Next","Segoe UI",Arial,sans-serif`),
-      gr(r, `ISLAND · PUCK`, 0, 43.68, 0.1 * 56),
+      gr(r, `PLAY · REPEAT`, 0, 43.68, 0.1 * 56),
       r.restore(),
       (r.fillStyle = s));
     let l = t * be;
@@ -5278,9 +5441,9 @@ function vr(e, t) {
   const [canvas, ctx] = cr(256, 256);
   const coral = e === `maple`;
   dr(ctx, 256, 256, {
-    base: coral ? `#ce8867` : `#51876a`,
-    dark: coral ? `#b47c61` : `#477357`,
-    light: coral ? `#f0c4a0` : `#a6c39c`,
+    base: coral ? `#bd7557` : `#3f785c`,
+    dark: coral ? `#a45f45` : `#315d47`,
+    light: coral ? `#e5b18a` : `#94b58d`,
     lines: 15, wave: 0.6, seed: t,
   });
   ctx.strokeStyle = coral ? `#f5d2a8` : `#bbd5ac`;
@@ -5319,11 +5482,12 @@ function yr() {
 function br() {
   let [e, t] = cr(128, 128),
     n = t.createRadialGradient(64, 64, 0, 64, 64, 64);
-  (n.addColorStop(0, `rgba(255,214,120,0)`),
-    n.addColorStop(0.6, `rgba(255,214,120,0)`),
-    n.addColorStop(0.7, `rgba(255,226,150,0.95)`),
-    n.addColorStop(0.8, `rgba(255,196,96,0.35)`),
-    n.addColorStop(1, `rgba(255,190,90,0)`),
+  (n.addColorStop(0, `rgba(255,255,255,0)`),
+    n.addColorStop(0.68, `rgba(255,255,255,0)`),
+    n.addColorStop(0.71, `rgba(255,255,255,0.9)`),
+    n.addColorStop(0.75, `rgba(255,255,255,0.9)`),
+    n.addColorStop(0.79, `rgba(255,255,255,0)`),
+    n.addColorStop(1, `rgba(255,255,255,0)`),
     (t.fillStyle = n),
     t.fillRect(0, 0, 128, 128));
   let r = new de(e);
@@ -5405,9 +5569,9 @@ function Or(e) {
   let t = new ne(),
     n = fr(
       {
-        base: `#cfa575`,
-        dark: `#bb9464`,
-        light: `#f3d6a6`,
+        base: `#c89a66`,
+        dark: `#ab7e50`,
+        light: `#e6c495`,
         lines: 28,
         wave: 1.1,
         seed: 3,
@@ -6074,7 +6238,7 @@ var Hr = class {
     constructor(e) {
       let t = fr(
           {
-            base: `#548368`,
+            base: `#3f7055`,
             dark: `#3f6b53`,
             light: `#87ab8b`,
             lines: 30,
@@ -6086,7 +6250,7 @@ var Hr = class {
         ),
         n = fr(
           {
-            base: `#c79072`,
+            base: `#ad694d`,
             dark: `#a76f54`,
             light: `#e7ba97`,
             lines: 30,
@@ -6146,9 +6310,11 @@ var Hr = class {
       ((c.renderOrder = 1), this.group.add(c));
       let l = new a({
           map: this.ringTex,
+          color: 0x2f7050,
           transparent: !0,
           depthWrite: !1,
-          blending: 2,
+          // A quiet outline stays readable on wood without additive glare.
+          blending: 1,
           opacity: 0,
         }),
         u = new g(this.ringGeo, l);
@@ -6158,7 +6324,6 @@ var Hr = class {
     }
     update(e, t, n, r) {
       let i = new Set(),
-        a = 0.55 + 0.45 * Math.sin(r * 4.2),
         shadowChanged = !1;
       for (let r of e) {
         i.add(r.id);
@@ -6179,7 +6344,7 @@ var Hr = class {
         (e.shadow.scale.set(s, 1, s),
           (e.shadowMat.opacity = 0.85 * (1 - o * 0.55)),
           (e.shadow.visible = !0));
-        let c = n === r.id ? 0.95 : t?.has(r.id) ? 0.28 + 0.32 * a : 0;
+        let c = n === r.id ? 0.95 : t?.has(r.id) ? 0.32 : 0;
         if (((e.ring.visible = c > 0.01), e.ring.visible)) {
           (Q(r.x, r.y, 0.016, e.ring.position), (e.ringMat.opacity = c));
           let t = n === r.id ? 1.05 : 1;
@@ -6201,6 +6366,7 @@ var Hr = class {
   Ur = 1 + Tr * 0.9,
   Wr = class {
     renderer;
+    keyLight;
     scene = new c();
     camera = new s(30, 1, 0.5, 400);
     onPass = null;
@@ -6248,16 +6414,15 @@ var Hr = class {
       this.effectsOn = !window.matchMedia?.(`(prefers-reduced-motion: reduce)`)
         .matches;
       let r = this.scene;
-      ((r.background = new w(0xdce6c7)), (r.fog = new oe(0xdce6c7, 70, 150)));
+      ((r.background = new w(0xdce6c7)), (r.fog = new oe(0xdce6c7, 160, 280)));
       let i = new ue(t);
       ((r.environment = i.fromScene(new se(), 0.04).texture),
-        (r.environmentIntensity = 0.35),
+        (r.environmentIntensity = 0.25),
         i.dispose(),
-        r.add(new te(0xfff9e8, 0xa8bc91, 0.95)));
-      let a = new ee(0xfff6df, 1.8);
+        r.add(new te(0xfffaf3, 0x8b927e, 0.8)));
+      let a = new ee(0xfffaf4, 1.65);
       (a.position.set(-11, 34, 5), (a.castShadow = !0));
-      let o = Math.min(window.innerWidth, window.innerHeight) < 600;
-      a.shadow.mapSize.set(o ? 1024 : 1536, o ? 1024 : 1536);
+      this.keyLight = a;
       let s = a.shadow.camera;
       ((s.left = -15),
         (s.right = 15),
@@ -6269,7 +6434,7 @@ var Hr = class {
         (a.shadow.bias = -4e-4),
         (a.shadow.normalBias = 0.025),
         r.add(a, a.target));
-      let c = new ee(16769730, 0.45);
+      let c = new ee(0xf6f8f2, 0.35);
       (c.position.set(14, 16, -8),
         r.add(c),
         r.add(Or(n)),
@@ -6296,13 +6461,22 @@ var Hr = class {
     resize(e, t) {
       ((this.width = Math.max(1, e)),
         (this.height = Math.max(1, t)));
-      // 限制 WebGL 像素量；DOM 界面仍使用设备的原生分辨率。
+      // 高清提高绘制与阴影分辨率；两档都保留总像素预算。
+      const compact = Math.min(this.width, this.height) < 600;
       const ratio = Math.min(
         window.devicePixelRatio || 1,
-        Math.min(this.width, this.height) < 600 ? 1.5 : 2,
-        Math.sqrt(2500000 / (this.width * this.height)),
+        U.highQuality ? 2 : compact ? 1.5 : 2,
+        Math.sqrt((U.highQuality ? 5000000 : 2500000) / (this.width * this.height)),
       );
       if (this.renderer.getPixelRatio() !== ratio) this.renderer.setPixelRatio(ratio);
+      const shadowSize = U.highQuality ? (compact ? 1536 : 2048) : (compact ? 1024 : 1536);
+      const shadow = this.keyLight.shadow;
+      if (shadow.mapSize.x !== shadowSize) {
+        shadow.mapSize.set(shadowSize, shadowSize);
+        shadow.map?.dispose();
+        shadow.map = null;
+        this.renderer.shadowMap.needsUpdate = !0;
+      }
       (this.renderer.setSize(this.width, this.height, !1),
         this.sparks.setScale(
           this.height * this.renderer.getPixelRatio() * 0.55,

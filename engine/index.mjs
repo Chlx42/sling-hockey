@@ -1397,6 +1397,16 @@ var Bt = Math.PI / 180,
       robustSamples: 4,
       sloppiness: 0,
     },
+    extreme: {
+      label: `极限`,
+      angleSigma: 0.12 * Bt,
+      powerSigma: 0.006,
+      budgetMs: 120,
+      robustTop: 3,
+      robustSamples: 2,
+      sloppiness: 0,
+      precise: true,
+    },
   },
   Ht = 1.5,
   Ut = Oe,
@@ -1474,7 +1484,7 @@ function Xt(e, t) {
   return i;
 }
 var Zt = 60;
-function* Qt(e, t, n, r) {
+function* Qt(e, t, n, r, yieldSteps = Zt) {
   let i = t.filter((e) => e.id !== r.puckId),
     a = ct(n, r.cx, r.px, r.py, i);
   if (!a.ok) return null;
@@ -1485,7 +1495,7 @@ function* Qt(e, t, n, r) {
     if ((e.step(), e.isSettled())) {
       if (++s >= 8) break;
     } else s = 0;
-    (t + 1) % Zt === 0 && (yield t);
+    (t + 1) % yieldSteps === 0 && (yield t);
   }
   e.stopAll();
   let c = e.snapshot();
@@ -1504,18 +1514,20 @@ function* tn(e, t, n, r = Math.random, i = {}) {
     d = 0,
     f = function* (e) {
       ((e.cx = F(e.cx, -8, 8)), (e.pull = F(e.pull, Ee, O)));
-      let n = yield* Qt(c, o, t, B(t, e));
+      let result = yield* Qt(c, o, t, B(t, e), n.precise ? 20 : Zt);
       return (
         d++,
-        n ? ((e.score = n.score + (r() - 0.5) * 0.5), u.push(e), e) : null
+        result ? ((e.score = result.score + (r() - 0.5) * 0.5), u.push(e), e) : null
       );
     };
   try {
     let e = Wt + Wt / Pe,
       i = [],
       p = [0, -1.5, 1.5, -3, 3, -4.5, 4.5, -6, 6, -7.5, 7.5];
+    // 极限先比较两种力度，既能快速穿门，也能避免满力撞回己方。
     for (let e of p)
-      i.push({ cx: e, target: 0, tag: `direct`, pull: 0.82 * O });
+      for (let power of n.precise ? [0.9, 0.65] : [0.82])
+        i.push({ cx: e, target: 0, tag: `direct`, pull: power * O });
     for (let t of p)
       (i.push({ cx: t, target: -e, tag: `bankL`, pull: O }),
         i.push({ cx: t, target: e, tag: `bankR`, pull: O }));
@@ -1536,7 +1548,7 @@ function* tn(e, t, n, r = Math.random, i = {}) {
       )
         break;
     }
-    for (let e = 0; e < 5 && a() - l < n.budgetMs * 0.6; e++) {
+    for (let e = 0; e < (n.precise ? 0 : 5) && a() - l < n.budgetMs * 0.6; e++) {
       let e = (r() * 2 - 1) * 8;
       (yield* f({
         puckId: Yt(o, t, e, 0, s),
@@ -1548,16 +1560,16 @@ function* tn(e, t, n, r = Math.random, i = {}) {
       }),
         yield d);
     }
-    let m = [...u].sort((e, t) => t.score - e.score).slice(0, 5),
+    let m = [...u].sort((e, t) => t.score - e.score).slice(0, n.precise ? 3 : 5),
       h = [];
     for (let e of m) {
-      for (let t of [-0.02, 0.02, -0.05, 0.05])
+      for (let t of n.precise ? [-0.01, 0.01, -0.025, 0.025] : [-0.02, 0.02, -0.05, 0.05])
         h.push({ ...e, psi: e.psi + t, tag: e.tag + `~a` });
-      for (let t of [-0.15, 0.12])
+      for (let t of n.precise ? [-0.08, 0.08] : [-0.15, 0.12])
         h.push({ ...e, pull: e.pull * (1 + t), tag: e.tag + `~p` });
     }
     for (let e of h) {
-      if (a() - l > n.budgetMs) break;
+      if (a() - l > n.budgetMs * (n.precise ? 0.8 : 1)) break;
       (yield* f(e), yield d);
     }
     let g = [...u].sort((e, t) => t.score - e.score),
@@ -1574,14 +1586,16 @@ function* tn(e, t, n, r = Math.random, i = {}) {
     else if (n.robustTop > 0 && n.robustSamples > 0) {
       let e = -1 / 0;
       for (let i of g.slice(0, n.robustTop)) {
-        let a = i.score,
+        // 留出稳健性验证的预算；同一候选完成全部样本后才比较均分。
+        if (n.precise && a() - l >= n.budgetMs) break;
+        let total = i.score,
           s = 1;
         for (let e = 0; e < n.robustSamples; e++) {
-          let e = yield* Qt(c, o, t, B(t, nn(t, i, n, r)));
-          (d++, yield d, (a += e ? e.score : -1e3), s++);
+          let e = yield* Qt(c, o, t, B(t, nn(t, i, n, r)), n.precise ? 20 : Zt);
+          (d++, yield d, (total += e ? e.score : -1e3), s++);
         }
-        let l = a / s;
-        l > e && ((e = l), (_ = i));
+        let average = total / s;
+        average > e && ((e = average), (_ = i));
       }
     }
     n.sloppiness > 0 &&

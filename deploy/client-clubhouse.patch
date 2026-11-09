@@ -1,0 +1,703 @@
+--- a/client/js/game.mjs
++++ b/client/js/game.mjs
+@@ -5,7 +5,7 @@
+ // 重建：python3 deploy/build-game.py
+ import * as T3 from '../vendor/three-orig.js';
+ import { TableAudio, contactSoundKey } from './table-audio.mjs?v=1';
+-import { islandMenu } from './island-ui.mjs';
++import { islandMenu, islandHelp } from './island-ui.mjs?v=3';
+ import { LocalPrediction } from './prediction.mjs?v=3';
+ import { n as e, t } from '../vendor/colyseus-orig.js';
+ import * as n from '@dimforge/rapier2d-compat';
+@@ -2295,9 +2295,8 @@
+     not_your_half: `只能拿自己半场的冰球`,
+     held: `这枚球正被拿着`,
+   },
+-  Un = `实时对战，随时出手！
+-按住自己半场的冰球 → 压上弹力带往后拉 → 松手发射
+-先清空自己半场的一方获胜`,
++  Un = `按住冰球 → 压带后拉 → 松手发射
++先清空自己的半场，就赢了`,
+   Wn = class {
+     ctx;
+     kind;
+@@ -2753,9 +2752,8 @@
+   Xn = 100,
+   Zn = [`puck`, `wall`, `divider`, `band`, `launch`],
+   Qn = 60,
+-  $n = `实时对战，随时出手！
+-按住自己半场的冰球 → 压上弹力带往后拉 → 松手发射
+-先清空自己半场的一方获胜`,
++  $n = `按住冰球 → 压带后拉 → 松手发射
++先清空自己的半场，就赢了`,
+   er = (e, t, n) => {
+     let r = t - e;
+     for (; r > Math.PI;) r -= Math.PI * 2;
+@@ -3416,9 +3414,9 @@
+               ]
+             : [
+                 {
+-                  label: `等待好友再来一局`,
++                  label: `重新邀请好友`,
+                   icon: `link`,
+-                  onClick: () => this.room.send(`rematch`),
++                  onClick: () => this.ctx.inviteFriend(),
+                 },
+                 {
+                   label: `返回主菜单`,
+@@ -3524,7 +3522,9 @@
+               ? c
+                 ? `瞄准中…`
+                 : `在线`
+-              : `断线 ${s.reconnectLeft}s`
++              : i === `over`
++                ? `已离开`
++                : `断线 ${s.reconnectLeft}s`
+             : `已离开`,
+           count: P(n, j(a)),
+           active: c,
+@@ -3569,7 +3569,7 @@
+               icon: `exit`,
+               onClick: () => this.ctx.exit(),
+             },
+-          ]))
++          ], () => this.ctx.ui.show(null)))
+         : this.ctx.exit();
+     }
+     grabbable(e) {
+@@ -3745,6 +3745,8 @@
+     h;
+     screens = new Map();
+     current = null;
++    screenFocus = new Map();
++    dialogEscape = null;
+     level = `normal`;
+     toastTimer = 0;
+     hudEl;
+@@ -3776,11 +3778,12 @@
+       ((this.root = e),
+         (this.sfx = t),
+         (this.h = n),
+-        (this.level = localStorage.getItem(`sling.level`) || `normal`),
++        (this.level = rr.some((level) => level.id === localStorage.getItem(`sling.level`))
++          ? localStorage.getItem(`sling.level`) : `normal`),
+         (e.innerHTML = this.template()));
+       for (let t of e.querySelectorAll(`.screen`))
+         this.screens.set(t.dataset.screen, t);
+-      (this.bindMenu(), this.bindHud());
++      (this.bindMenu(), this.bindHud(), this.bindScreenKeys());
+     }
+     get name() {
+       return q(J(this.root, `#nick`).value) || this.defaultName();
+@@ -3821,11 +3824,15 @@
+       <div class="panel">
+         <button class="icon-btn back" data-act="back" aria-label="返回" style="background:rgba(0,0,0,.06);color:var(--ink)">${G.back}</button>
+         <h2 style="text-align:center">好友对战</h2>
+-        <p class="sub" style="text-align:center">创建房间后把邀请链接发给好友，对方打开即可加入</p>
++        <p class="sub" style="text-align:center">开一张双人球桌，或加入好友的房间。</p>
+         <div class="stack">
+           <button class="btn btn-primary" data-act="create-room">${G.link}创建房间</button>
+-          <div class="field"><label for="room-code">房间号</label><input id="room-code" maxlength="32" autocomplete="off" spellcheck="false" placeholder="输入好友的房间号"></div>
+-          <button class="btn btn-wood" data-act="join-room">加入房间</button>
++          <div class="friend-divider">已有好友邀请？</div>
++          <form id="friend-join" class="stack" novalidate>
++            <div class="field"><label for="room-code">加入好友</label><input id="room-code" maxlength="2048" autocomplete="off" autocapitalize="none" spellcheck="false" enterkeyhint="go" aria-describedby="room-code-error" placeholder="粘贴邀请链接或输入房间号"></div>
++            <p id="room-code-error" class="field-error" role="alert" hidden></p>
++            <button class="btn btn-wood" type="submit" data-act="join-room">加入房间</button>
++          </form>
+         </div>
+       </div>
+     </section>
+@@ -3849,15 +3856,7 @@
+     <section class="screen" data-screen="help">
+       <div class="panel">
+         <button class="icon-btn back" data-act="back" aria-label="返回" style="background:rgba(0,0,0,.06);color:var(--ink)">${G.back}</button>
+-        <h2 style="text-align:center;margin-bottom:14px">玩法说明</h2>
+-        <ul class="rules">
+-          <li><i>1</i><span>棋盘中间的隔板上有一个略宽于冰球的小洞，两端各有一条弹力带。开局每边 5 枚冰球。</span></li>
+-          <li><i>2</i><span><b>实时对战，不分回合</b>：双方随时出手，比谁又快又准。<b>颜色不代表归属</b>，落在你半场的冰球都由你操作。</span></li>
+-          <li><i>3</i><span>按住自己半场里停下（或慢慢滑动）的冰球，拖向弹力带，压上带子后往后拉，松手发射。一次只能拿一枚。</span></li>
+-          <li><i>4</i><span>像弹弓一样：正后方拉直射，往右后方拉就往左前方斜射。手指往侧面挪一点，方向就跟着变一点；冰球拉满后手指还能继续往后拉，拉得越远，方向调得越细。拉伸距离决定力度。</span></li>
+-          <li><i>5</i><span><b>先把自己半场清空的一方获胜</b>；常规时间 3 分钟，时间到时半场剩余较少的一方获胜。剩余相同进入 60 秒<b>加时赛</b>：先领先的一方获胜（默认关闭辅助线，可在设置中调整）。</span></li>
+-          <li><i>6</i><span>电脑上按 Esc 或右键可以取消当前瞄准；人机对战中按 Esc 暂停。</span></li>
+-        </ul>
++        ${islandHelp()}
+         <div class="stack" style="margin-top:18px"><button class="btn btn-wood" data-act="back">知道了</button></div>
+       </div>
+     </section>
+@@ -3865,9 +3864,13 @@
+     <section class="screen" data-screen="settings">
+       <div class="panel">
+         <button class="icon-btn back" data-act="back" aria-label="返回" style="background:rgba(0,0,0,.06);color:var(--ink)">${G.back}</button>
+-        <h2 style="text-align:center">小岛设置</h2>
++        <h2 style="text-align:center">小木桌设置</h2>
+         <p class="sub" style="text-align:center">关掉辅助线，全凭手感瞄准，挑战更高难度</p>
+         <div class="settings">
++          <label class="setting">
++            <span class="txt"><b>游戏声音</b><small>木球碰撞、弹力带与对局提示音</small></span>
++            <input type="checkbox" class="switch" data-set="sound">
++          </label>
+           <label class="setting">
+             <span class="txt"><b>瞄准辅助线</b><small>拉伸时显示发射方向与力度的预测虚线。关闭后双方的虚线都不显示，力度条保留</small></span>
+             <input type="checkbox" class="switch" data-set="guide">
+@@ -3913,8 +3916,8 @@
+       <div class="ping"></div>
+       <svg class="guide-path" aria-hidden="true"><polyline points=""/><circle r="5"/></svg>
+       <div class="guide-hand"><span class="ripple"></span><svg viewBox="0 0 48 48" aria-hidden="true"><path d="M15.5 9.5a3.5 3.5 0 0 1 7 0v13.2l9.8 2.3a4 4 0 0 1 3 4.5l-1.5 9.3a4 4 0 0 1-4 3.3H20.6a4 4 0 0 1-3-1.4l-8.5-9.7a2.9 2.9 0 0 1 4.1-4.1l2.3 2.1z"/></svg></div>
+-      <div class="toast"></div>
+-    </div>`;
++    </div>
++    <div class="toast" role="status" aria-live="polite" aria-atomic="true"></div>`;
+     }
+     bindMenu() {
+       let e = this.root,
+@@ -3945,6 +3948,11 @@
+               case `help`:
+                 this.show(`help`);
+                 break;
++              case `chlx-note`:
++                this.showDialog(`Chlx`, `天天开心 :3`,
++                  [{ label: `行`, kind: `wood`, onClick: () => this.show(`menu`) }],
++                  () => this.show(`menu`));
++                break;
+               case `settings`:
+                 (this.refreshSettings(), this.show(`settings`));
+                 break;
+@@ -3966,24 +3974,45 @@
+                   ),
+                   this.refreshSound());
+                 break;
++              case `quick-play`:
+               case `start-ai`:
+                 this.h.onLocal(this.level);
+                 break;
+               case `create-room`:
+                 this.h.onCreateFriend();
+                 break;
+-              case `join-room`: {
+-                let t = this.parseRoomCode(J(e, `#room-code`).value);
+-                t
+-                  ? this.h.onJoinFriend(t)
+-                  : this.toast(`请输入房间号或邀请链接`);
++              case `join-room`:
++                // The form handles both clicking and the keyboard's Enter key.
+                 break;
+-              }
+               case `hud-menu`:
+                 this.h.onMenuButton();
+             }
+         }));
+-      for (let t of e.querySelectorAll(`.level`))
++      const roomInput = J(e, `#room-code`), roomError = J(e, `#room-code-error`);
++      roomInput.addEventListener(`input`, () => {
++        roomInput.removeAttribute(`aria-invalid`);
++        roomError.hidden = true;
++        roomError.textContent = ``;
++      });
++      roomInput.addEventListener(`keydown`, (event) => {
++        if (event.key === `Enter` && event.isComposing) event.preventDefault();
++      });
++      J(e, `#friend-join`).addEventListener(`submit`, (event) => {
++        event.preventDefault();
++        this.sfx.unlock();
++        const room = this.parseRoomCode(roomInput.value);
++        if (!room) {
++          roomError.textContent = roomInput.value.trim()
++            ? `这段内容不是有效的房间号或邀请链接，请确认后重试。`
++            : `请输入好友的房间号，或粘贴完整邀请链接。`;
++          roomError.hidden = false;
++          roomInput.setAttribute(`aria-invalid`, `true`);
++          roomInput.focus();
++          return;
++        }
++        this.h.onJoinFriend(room);
++      });
++      for (let t of e.querySelectorAll(`[data-level]`))
+         t.addEventListener(`click`, () => {
+           ((this.level = t.dataset.level),
+             localStorage.setItem(`sling.level`, this.level),
+@@ -3991,16 +4020,32 @@
+         });
+       for (let t of e.querySelectorAll(`[data-set]`))
+         t.addEventListener(`change`, () => {
+-          (An({ [t.dataset.set]: t.checked }), this.refreshSettings());
++          if (t.dataset.set === `sound`) {
++            this.sfx.unlock();
++            this.sfx.setEnabled(t.checked);
++            localStorage.setItem(`sling.sound`, t.checked ? `1` : `0`);
++            this.refreshSound();
++          } else An({ [t.dataset.set]: t.checked });
++          this.refreshSettings();
+         });
+-      for (let t of e.querySelectorAll(`[data-period]`))
++      for (let t of e.querySelectorAll(`[data-period]`)) {
+         t.addEventListener(`click`, () => this.loadBoard(t.dataset.period));
++        t.addEventListener(`keydown`, (event) => {
++          if (![`ArrowLeft`, `ArrowRight`, `Home`, `End`].includes(event.key)) return;
++          event.preventDefault();
++          const tabs = [...e.querySelectorAll(`[data-period]`)];
++          const index = event.key === `Home` ? 0 : event.key === `End` ? tabs.length - 1
++            : (tabs.indexOf(t) + (event.key === `ArrowLeft` ? -1 : 1) + tabs.length) % tabs.length;
++          tabs[index].focus();
++          this.loadBoard(tabs[index].dataset.period);
++        });
++      }
+       (this.refreshLevels(), this.refreshSound(), this.refreshSettings());
+     }
+     refreshSettings() {
+       for (let e of this.root.querySelectorAll(`[data-set]`)) {
+         let t = e.dataset.set;
+-        e.checked = U[t];
++        e.checked = t === `sound` ? this.sfx.enabled : U[t];
+         let n = t === `overtimeNoGuide` && !U.guide;
+         ((e.disabled = n), e.closest(`.setting`)?.classList.toggle(`muted`, n));
+       }
+@@ -4013,6 +4058,7 @@
+         let n = t.dataset.period === e;
+         (t.classList.toggle(`on`, n),
+           t.setAttribute(`aria-selected`, String(n)));
++        t.tabIndex = n ? 0 : -1;
+       }
+       let r = J(n, `.board-body`),
+         i = J(n, `.board-me`);
+@@ -4067,22 +4113,34 @@
+     parseRoomCode(e) {
+       let t = e.trim();
+       if (!t) return null;
++      const valid = (value) => /^[A-Za-z0-9_-]{4,32}$/.test(value ?? ``);
++      if (valid(t)) return t;
+       try {
+-        let e = new URL(t).searchParams.get(`room`);
+-        if (e) return e;
++        const url = new URL(t), room = url.searchParams.get(`room`);
++        if ([`http:`, `https:`].includes(url.protocol) && valid(room)) return room;
+       } catch {}
+-      let n = t.match(/[A-Za-z0-9_-]{4,32}/);
+-      return n ? n[0] : null;
++      return null;
+     }
+     refreshLevels() {
+-      for (let e of this.root.querySelectorAll(`.level`))
+-        e.classList.toggle(`sel`, e.dataset.level === this.level);
++      for (let e of this.root.querySelectorAll(`[data-level]`)) {
++        const selected = e.dataset.level === this.level;
++        e.classList.toggle(`sel`, selected);
++        e.setAttribute(`aria-pressed`, String(selected));
++      }
++      const note = this.root.querySelector(`#quick-level-note`);
++      if (note) note.textContent = rr.find((level) => level.id === this.level)?.desc ?? ``;
+     }
+     refreshSound() {
++      const toggle = this.root.querySelector(`[data-set="sound"]`);
++      if (toggle) toggle.checked = this.sfx.enabled;
+       for (let e of this.root.querySelectorAll(`.snd`))
+         e.innerHTML = this.sfx.enabled ? G.soundOn : G.soundOff;
+       for (let e of this.root.querySelectorAll(`.snd-t`))
+         e.textContent = this.sfx.enabled ? `声音：开` : `声音：关`;
++      for (let e of this.root.querySelectorAll(`[data-act="sound"], [data-act="hud-sound"]`)) {
++        e.setAttribute(`aria-pressed`, String(this.sfx.enabled));
++        e.setAttribute(`aria-label`, this.sfx.enabled ? `关闭声音` : `开启声音`);
++      }
+     }
+     bindHud() {
+       let e = this.root;
+@@ -4101,11 +4159,78 @@
+         (this.pingEl = J(e, `.ping`)),
+         (this.streakEl = J(e, `.streak`)));
+     }
++    bindScreenKeys() {
++      window.addEventListener(`keydown`, (event) => {
++        if (event.defaultPrevented || event.isComposing || !this.current) return;
++        if (event.key === `Escape`) {
++          if ([`ai`, `friend`, `help`, `settings`, `board`].includes(this.current)) {
++            event.preventDefault();
++            this.show(`menu`);
++          } else if (this.current === `dialog` && this.dialogEscape) {
++            event.preventDefault();
++            this.dialogEscape();
++          }
++          return;
++        }
++        if (event.key !== `Tab`) return;
++        const screen = this.screens.get(this.current);
++        const controls = [...screen.querySelectorAll(`button, input, select, textarea, summary, a[href], [tabindex]`)]
++          .filter((node) => !node.disabled && node.tabIndex >= 0 && node.getClientRects().length);
++        const first = controls[0], last = controls.at(-1), active = document.activeElement;
++        if (!first) {
++          event.preventDefault();
++          this.focusScreen(screen);
++        } else if (event.shiftKey && (active === first || !controls.includes(active))) {
++          event.preventDefault();
++          last.focus();
++        } else if (!event.shiftKey && (active === last || !controls.includes(active))) {
++          event.preventDefault();
++          first.focus();
++        }
++      });
++    }
++    focusScreen(screen) {
++      const previous = this.screenFocus.get(this.current);
++      const target = previous && screen.contains(previous) && !previous.disabled && previous.getClientRects().length
++        ? previous : screen.querySelector(`h1, h2, .big`)
++          ?? screen.querySelector(`button:not(:disabled), input:not(:disabled)`);
++      const focus = target ?? screen;
++      if (!focus.matches(`button, input, select, textarea, summary, a[href], [tabindex]`)) focus.tabIndex = -1;
++      focus.focus({ preventScroll: true });
++    }
+     show(e) {
+-      if (this.current !== e) {
++      const changed = this.current !== e;
++      if (changed) {
++        const active = document.activeElement;
++        if (active && this.root.contains(active)) {
++          this.screenFocus.set(this.current, active);
++          active.blur();
++        }
+         window.clearInterval(this.waitTimer);
+-        for (let [t, n] of this.screens) n.classList.toggle(`on`, t === e);
++        for (let [t, n] of this.screens) {
++          n.classList.toggle(`on`, t === e);
++          n.inert = t !== e;
++          n.setAttribute(`aria-hidden`, String(t !== e));
++        }
+         this.current = e;
++        if (e !== `dialog`) this.dialogEscape = null;
++      }
++      this.hudEl.inert = e !== null;
++      const screen = this.screens.get(e);
++      if (screen && e !== `menu`) {
++        screen.setAttribute(`role`, `dialog`);
++        screen.setAttribute(`aria-modal`, `true`);
++        screen.setAttribute(`aria-label`, screen.querySelector(`h2, .big, .tag`)?.textContent ?? `对局信息`);
++      }
++      if (screen && (changed || !screen.contains(document.activeElement)))
++        requestAnimationFrame(() => {
++          if (this.current === e) this.focusScreen(screen);
++        });
++      else if (changed && e === null) {
++        const previous = this.screenFocus.get(null);
++        if (previous?.isConnected && !previous.disabled && previous.getClientRects().length)
++          previous.focus({ preventScroll: true });
++        else document.activeElement?.blur();
+       }
+     }
+     get screen() {
+@@ -4134,12 +4259,13 @@
+       let r = J(e, `.nm`);
+       r.textContent !== t.name && (r.textContent = t.name);
+       let i = J(e, `.st`),
+-        a = t.sub ?? ``;
++        a = n === 0 && t.sub === `你` ? `你的半场` : t.sub ?? ``;
+       (i.textContent !== a && (i.textContent = a),
+         (i.style.display = a ? `` : `none`));
+       let o = J(e, `.cnt b`),
+         s = String(t.count);
+       o.textContent !== s && (o.textContent = s);
++      J(e, `.cnt`).setAttribute(`aria-label`, `${n === 0 ? `你的` : `对手的`}半场剩余 ${s} 枚冰球`);
+       let c = this.lastCounts[n];
+       if (c >= 0 && c !== t.count) {
+         let r = t.count - c;
+@@ -4336,18 +4462,33 @@
+       <div class="big">等待好友加入…</div>
+       <div class="mono">房间号</div>
+       <div class="room-code">${K(e)}</div>
+-      <div class="link-box"><input readonly value="${K(t)}"><button class="btn btn-wood btn-small" data-x="copy">${G.copy}复制</button></div>
++      <div class="link-box"><input readonly aria-label="好友邀请链接" value="${K(t)}"><button class="btn btn-wood btn-small" data-x="copy">${G.copy}复制链接</button></div>
++      <p class="invite-feedback" role="status" aria-live="polite"></p>
+       <div class="stack" style="width:100%;margin-top:4px">
+         ${i ? `<button class="btn btn-primary" data-x="share">${G.share}发送给好友</button>` : ``}
+         <button class="btn btn-ghost" data-x="cancel">取消</button>
+       </div>`;
++      const inviteFeedback = J(r, `.invite-feedback`);
+       let a = async () => {
++        const input = J(r, `input`), button = J(r, `[data-x="copy"]`);
++        let copied = false;
+         try {
+-          (await navigator.clipboard.writeText(t), this.toast(`链接已复制`));
++          await navigator.clipboard.writeText(t);
++          copied = true;
+         } catch {
+-          (J(r, `input`).select(),
+-            document.execCommand(`copy`),
+-            this.toast(`链接已复制`));
++          input.focus();
++          input.select();
++          try { copied = document.execCommand(`copy`); } catch {}
++        }
++        if (!button.isConnected || this.current !== `wait`) return;
++        if (copied) {
++          inviteFeedback.textContent = `链接已复制，发给好友就能加入。`;
++          button.innerHTML = `${G.copy}已复制`;
++          this.toast(`邀请链接已复制`);
++        } else {
++          inviteFeedback.textContent = `未能自动复制，请手动复制已选中的链接。`;
++          button.innerHTML = `${G.copy}复制链接`;
++          this.toast(`复制未成功，请手动复制链接`);
+         }
+       };
+       (r.querySelectorAll(`[data-x]`).forEach((e) => {
+@@ -4362,7 +4503,10 @@
+                     text: `来和我玩一局弹射冰球！`,
+                     url: t,
+                   })
+-                  .catch(() => {})
++                  .catch((error) => {
++                    if (error?.name !== `AbortError`)
++                      inviteFeedback.textContent = `暂时无法分享，请复制链接发送给好友。`;
++                  })
+               : n();
+         };
+       }),
+@@ -4505,11 +4649,18 @@
+         r = n.querySelector(`.status`);
+       if ((r && r.textContent !== e && (r.textContent = e), t)) {
+         let e = J(n, `.stack`);
++        const focused = e.contains(document.activeElement) ? document.activeElement.dataset.i : null;
+         ((e.innerHTML = this.buttons(t)), this.wire(e, t));
+-      }
+-    }
+-    showDialog(e, t, n) {
++        if (focused != null) {
++          const next = e.querySelector(`button[data-i="${focused}"]:not(:disabled)`)
++            ?? e.querySelector(`button:not(:disabled)`);
++          next?.focus({ preventScroll: true });
++        }
++      }
++    }
++    showDialog(e, t, n, onEscape = null) {
+       let r = J(this.screens.get(`dialog`), `.panel`);
++      this.dialogEscape = onEscape;
+       ((r.innerHTML = `<h2>${K(e)}</h2><p class="sub">${K(t)}</p><div class="stack">${this.buttons(n)}</div>`),
+         this.wire(r, n),
+         this.show(`dialog`));
+@@ -4551,6 +4702,7 @@
+           canvas: n,
+           exit: () => this.showMenu(),
+           requeue: () => this.startMatchmaking(),
++          inviteFriend: () => this.createFriendRoom(),
+         }));
+     }
+     getNet() {
+@@ -4618,7 +4770,7 @@
+           ),
+         );
+       } catch (e) {
+-        this.netError(e);
++        this.netError(e, () => this.startMatchmaking());
+         return;
+       }
+       ((this.ticket = r),
+@@ -4629,7 +4781,7 @@
+               : t.leave();
+           },
+           (t) => {
+-            e === this.flow && this.netError(t);
++            e === this.flow && this.netError(t, () => this.startMatchmaking());
+           },
+         ));
+     }
+@@ -4649,7 +4801,7 @@
+               if (e !== this.flow) return void t.leave();
+               this.enterOnline(t, `friend`);
+             },
+-            (t) => e === this.flow && this.netError(t),
++            (t) => e === this.flow && this.netError(t, () => this.createFriendRoom(), `friend`),
+           ));
+     }
+     joinFriendRoom(e) {
+@@ -4669,32 +4821,36 @@
+               if (t !== this.flow) return void e.leave();
+               this.enterOnline(e, `friend`);
+             },
+-            (e) => {
++            (error) => {
+               if (t !== this.flow) return;
+-              let n = String(e?.message ?? e),
+-                r = /locked|full/i.test(n);
+-              this.ui.showDialog(
+-                r ? `房间已满` : `无法加入房间`,
+-                r
+-                  ? `这个房间里的对局已经开始了。`
+-                  : `房间不存在或已解散，请确认邀请链接。`,
+-                [{ label: `返回主菜单`, onClick: () => this.showMenu() }],
+-              );
++              const message = String(error?.message ?? error);
++              const full = /locked|full/i.test(message);
++              const missing = /not found|not exist|not available/i.test(message);
++              this.netError(error, () => this.joinFriendRoom(e), `friend`,
++                full ? `房间暂时无法加入` : missing ? `没有找到这个房间` : `暂时无法加入好友房间`,
++                full ? `房间已满或对局已经开始，请让好友重新邀请你。`
++                  : missing ? `房间可能已解散，请确认房间号，或向好友索取新链接。`
++                  : `请检查网络后重试，也可以返回确认邀请链接。`);
+             },
+           ));
+     }
+     enterOnline(e, t) {
+       (this.stopDemo(), (this.match = new tr(this.ctx, e, t)));
+     }
+-    netError(e) {
+-      (console.warn(e),
+-        this.ui.showDialog(
+-          `无法连接服务器`,
+-          `请确认联机服务器已启动（npm run dev 或 npm start），然后重试。`,
+-          [{ label: `返回主菜单`, onClick: () => this.showMenu() }],
+-        ));
++    netError(e, retry, entry = `menu`, title = `暂时连不上服务器`, message = `请检查网络连接，稍后再试。你也可以回首页先玩一局人机对战。`) {
++      console.warn(e);
++      const back = () => {
++        this.showMenu();
++        if (entry !== `menu`) this.ui.show(entry);
++      };
++      const buttons = [];
++      if (retry) buttons.push({ label: `重试`, icon: `restart`, onClick: retry });
++      buttons.push({ label: entry === `friend` ? `返回好友对战` : `返回主菜单`, kind: `ghost`, onClick: back });
++      this.ui.showDialog(title, message, buttons, back);
+     }
+     frame(e) {
++      // The opaque clubhouse needs no hidden AI simulation or WebGL frames.
++      if (this.ui.screen === `menu`) return;
+       let t = this.match ?? this.demo,
+         n = t ? t.update(e) : { pucks: [] };
+       ((this.shownAims = n.aims?.length ?? 0), this.scene.frame(e, n));
+@@ -5110,7 +5266,7 @@
+     i = sr(42),
+     a = (e) => (e + T) * 56,
+     o = (e) => (E - e) * 56;
+-  ((r.fillStyle = `#e6d5b0`), r.fillRect(0, 0, e, t));
++  ((r.fillStyle = `#f0e4c9`), r.fillRect(0, 0, e, t));
+   for (let n = 0; n < 70; n++) {
+     let n = i() * e,
+       a = i() * t,
+@@ -5168,10 +5324,10 @@
+     ((r.textAlign = `center`),
+       (r.textBaseline = `middle`),
+       (r.fillStyle = c),
+-      (r.font = `900 ${0.98 * 56}px "PingFang SC","Microsoft YaHei","Noto Sans SC",sans-serif`),
+-      r.fillText(`小岛冰球`, 0, -12.32),
++      (r.font = `900 ${0.8 * 56}px "PingFang SC","Microsoft YaHei","Noto Sans SC",sans-serif`),
++      r.fillText(`广告位招租`, 0, -12.32),
+       (r.font = `700 23.52px "Avenir Next","Segoe UI",Arial,sans-serif`),
+-      gr(r, `ISLAND · PUCK`, 0, 43.68, 0.1 * 56),
++      gr(r, `PLAY · REPEAT`, 0, 43.68, 0.1 * 56),
+       r.restore(),
+       (r.fillStyle = s));
+     let l = t * be;
+@@ -5249,9 +5405,9 @@
+   const [canvas, ctx] = cr(256, 256);
+   const coral = e === `maple`;
+   dr(ctx, 256, 256, {
+-    base: coral ? `#ce8867` : `#51876a`,
+-    dark: coral ? `#b47c61` : `#477357`,
+-    light: coral ? `#f0c4a0` : `#a6c39c`,
++    base: coral ? `#bd7557` : `#3f785c`,
++    dark: coral ? `#a45f45` : `#315d47`,
++    light: coral ? `#e5b18a` : `#94b58d`,
+     lines: 15, wave: 0.6, seed: t,
+   });
+   ctx.strokeStyle = coral ? `#f5d2a8` : `#bbd5ac`;
+@@ -5290,11 +5446,12 @@
+ function br() {
+   let [e, t] = cr(128, 128),
+     n = t.createRadialGradient(64, 64, 0, 64, 64, 64);
+-  (n.addColorStop(0, `rgba(255,214,120,0)`),
+-    n.addColorStop(0.6, `rgba(255,214,120,0)`),
+-    n.addColorStop(0.7, `rgba(255,226,150,0.95)`),
+-    n.addColorStop(0.8, `rgba(255,196,96,0.35)`),
+-    n.addColorStop(1, `rgba(255,190,90,0)`),
++  (n.addColorStop(0, `rgba(255,255,255,0)`),
++    n.addColorStop(0.68, `rgba(255,255,255,0)`),
++    n.addColorStop(0.71, `rgba(255,255,255,0.9)`),
++    n.addColorStop(0.75, `rgba(255,255,255,0.9)`),
++    n.addColorStop(0.79, `rgba(255,255,255,0)`),
++    n.addColorStop(1, `rgba(255,255,255,0)`),
+     (t.fillStyle = n),
+     t.fillRect(0, 0, 128, 128));
+   let r = new de(e);
+@@ -5376,9 +5533,9 @@
+   let t = new ne(),
+     n = fr(
+       {
+-        base: `#cfa575`,
+-        dark: `#bb9464`,
+-        light: `#f3d6a6`,
++        base: `#c89a66`,
++        dark: `#ab7e50`,
++        light: `#e6c495`,
+         lines: 28,
+         wave: 1.1,
+         seed: 3,
+@@ -6045,7 +6202,7 @@
+     constructor(e) {
+       let t = fr(
+           {
+-            base: `#548368`,
++            base: `#3f7055`,
+             dark: `#3f6b53`,
+             light: `#87ab8b`,
+             lines: 30,
+@@ -6057,7 +6214,7 @@
+         ),
+         n = fr(
+           {
+-            base: `#c79072`,
++            base: `#ad694d`,
+             dark: `#a76f54`,
+             light: `#e7ba97`,
+             lines: 30,
+@@ -6117,9 +6274,11 @@
+       ((c.renderOrder = 1), this.group.add(c));
+       let l = new a({
+           map: this.ringTex,
++          color: 0x2f7050,
+           transparent: !0,
+           depthWrite: !1,
+-          blending: 2,
++          // A quiet outline stays readable on wood without additive glare.
++          blending: 1,
+           opacity: 0,
+         }),
+         u = new g(this.ringGeo, l);
+@@ -6129,7 +6288,6 @@
+     }
+     update(e, t, n, r) {
+       let i = new Set(),
+-        a = 0.55 + 0.45 * Math.sin(r * 4.2),
+         shadowChanged = !1;
+       for (let r of e) {
+         i.add(r.id);
+@@ -6150,7 +6308,7 @@
+         (e.shadow.scale.set(s, 1, s),
+           (e.shadowMat.opacity = 0.85 * (1 - o * 0.55)),
+           (e.shadow.visible = !0));
+-        let c = n === r.id ? 0.95 : t?.has(r.id) ? 0.28 + 0.32 * a : 0;
++        let c = n === r.id ? 0.95 : t?.has(r.id) ? 0.32 : 0;
+         if (((e.ring.visible = c > 0.01), e.ring.visible)) {
+           (Q(r.x, r.y, 0.016, e.ring.position), (e.ringMat.opacity = c));
+           let t = n === r.id ? 1.05 : 1;
+@@ -6219,13 +6377,13 @@
+       this.effectsOn = !window.matchMedia?.(`(prefers-reduced-motion: reduce)`)
+         .matches;
+       let r = this.scene;
+-      ((r.background = new w(0xdce6c7)), (r.fog = new oe(0xdce6c7, 70, 150)));
++      ((r.background = new w(0xdce6c7)), (r.fog = new oe(0xdce6c7, 160, 280)));
+       let i = new ue(t);
+       ((r.environment = i.fromScene(new se(), 0.04).texture),
+-        (r.environmentIntensity = 0.35),
++        (r.environmentIntensity = 0.25),
+         i.dispose(),
+-        r.add(new te(0xfff9e8, 0xa8bc91, 0.95)));
+-      let a = new ee(0xfff6df, 1.8);
++        r.add(new te(0xfffaf3, 0x8b927e, 0.8)));
++      let a = new ee(0xfffaf4, 1.65);
+       (a.position.set(-11, 34, 5), (a.castShadow = !0));
+       let o = Math.min(window.innerWidth, window.innerHeight) < 600;
+       a.shadow.mapSize.set(o ? 1024 : 1536, o ? 1024 : 1536);
+@@ -6240,7 +6398,7 @@
+         (a.shadow.bias = -4e-4),
+         (a.shadow.normalBias = 0.025),
+         r.add(a, a.target));
+-      let c = new ee(16769730, 0.45);
++      let c = new ee(0xf6f8f2, 0.35);
+       (c.position.set(14, 16, -8),
+         r.add(c),
+         r.add(Or(n)),

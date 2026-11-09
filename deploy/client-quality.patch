@@ -1,0 +1,91 @@
+--- a/client/js/game.mjs
++++ b/client/js/game.mjs
+@@ -2234,12 +2234,13 @@
+     }
+   },
+   Dn = `sling.settings`,
+-  On = { guide: !0, overtimeNoGuide: !0 };
++  On = { guide: !0, overtimeNoGuide: !0, highQuality: !0 };
+ function kn() {
+   try {
+     let e = JSON.parse(localStorage.getItem(Dn) ?? `{}`);
+     return {
+       guide: typeof e.guide == `boolean` ? e.guide : On.guide,
++      highQuality: typeof e.highQuality == `boolean` ? e.highQuality : On.highQuality,
+       overtimeNoGuide:
+         typeof e.overtimeNoGuide == `boolean`
+           ? e.overtimeNoGuide
+@@ -3894,8 +3895,12 @@
+       <div class="panel">
+         <button class="icon-btn back" data-act="back" aria-label="返回" style="background:rgba(0,0,0,.06);color:var(--ink)">${G.back}</button>
+         <h2 style="text-align:center">小木桌设置</h2>
+-        <p class="sub" style="text-align:center">关掉辅助线，全凭手感瞄准，挑战更高难度</p>
++        <p class="sub" style="text-align:center">把画面、声音和手感，调成你喜欢的样子</p>
+         <div class="settings">
++          <label class="setting">
++            <span class="txt"><b>高清棋盘</b><small>让棋子边缘、木纹和阴影更清楚。设备发热或不够流畅时，可以关闭</small></span>
++            <input type="checkbox" class="switch" data-set="highQuality">
++          </label>
+           <label class="setting">
+             <span class="txt"><b>游戏声音</b><small>木球碰撞、弹力带与对局提示音</small></span>
+             <input type="checkbox" class="switch" data-set="sound">
+@@ -4055,6 +4060,7 @@
+             localStorage.setItem(`sling.sound`, t.checked ? `1` : `0`);
+             this.refreshSound();
+           } else An({ [t.dataset.set]: t.checked });
++          if (t.dataset.set === `highQuality`) this.h.onQualityChange();
+           this.refreshSettings();
+         });
+       for (let t of e.querySelectorAll(`[data-period]`)) {
+@@ -4722,6 +4728,7 @@
+           onCreateFriend: () => this.createFriendRoom(),
+           onJoinFriend: (e) => this.joinFriendRoom(e),
+           onMenuButton: () => this.match?.onMenu(),
++          onQualityChange: () => this.scene.resize(this.scene.width, this.scene.height),
+           loadBoard: (e) => Jn(e),
+         })),
+         (this.ctx = {
+@@ -6359,6 +6366,7 @@
+   Ur = 1 + Tr * 0.9,
+   Wr = class {
+     renderer;
++    keyLight;
+     scene = new c();
+     camera = new s(30, 1, 0.5, 400);
+     onPass = null;
+@@ -6414,8 +6422,7 @@
+         r.add(new te(0xfffaf3, 0x8b927e, 0.8)));
+       let a = new ee(0xfffaf4, 1.65);
+       (a.position.set(-11, 34, 5), (a.castShadow = !0));
+-      let o = Math.min(window.innerWidth, window.innerHeight) < 600;
+-      a.shadow.mapSize.set(o ? 1024 : 1536, o ? 1024 : 1536);
++      this.keyLight = a;
+       let s = a.shadow.camera;
+       ((s.left = -15),
+         (s.right = 15),
+@@ -6454,13 +6461,22 @@
+     resize(e, t) {
+       ((this.width = Math.max(1, e)),
+         (this.height = Math.max(1, t)));
+-      // 限制 WebGL 像素量；DOM 界面仍使用设备的原生分辨率。
++      // 高清提高绘制与阴影分辨率；两档都保留总像素预算。
++      const compact = Math.min(this.width, this.height) < 600;
+       const ratio = Math.min(
+         window.devicePixelRatio || 1,
+-        Math.min(this.width, this.height) < 600 ? 1.5 : 2,
+-        Math.sqrt(2500000 / (this.width * this.height)),
++        U.highQuality ? 2 : compact ? 1.5 : 2,
++        Math.sqrt((U.highQuality ? 5000000 : 2500000) / (this.width * this.height)),
+       );
+       if (this.renderer.getPixelRatio() !== ratio) this.renderer.setPixelRatio(ratio);
++      const shadowSize = U.highQuality ? (compact ? 1536 : 2048) : (compact ? 1024 : 1536);
++      const shadow = this.keyLight.shadow;
++      if (shadow.mapSize.x !== shadowSize) {
++        shadow.mapSize.set(shadowSize, shadowSize);
++        shadow.map?.dispose();
++        shadow.map = null;
++        this.renderer.shadowMap.needsUpdate = !0;
++      }
+       (this.renderer.setSize(this.width, this.height, !1),
+         this.sparks.setScale(
+           this.height * this.renderer.getPixelRatio() * 0.55,
