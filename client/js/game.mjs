@@ -9,6 +9,8 @@ import { islandMenu, islandHelp } from './island-ui.mjs?v=5';
 import { LocalPrediction, PredictionClock } from './prediction.mjs?v=5';
 import { n as e, t } from '../vendor/colyseus-orig.js';
 import * as n from '@dimforge/rapier2d-compat';
+import { prepareNorthward } from '../northward-login.mjs';
+const northwardUser = await prepareNorthward('hockey', '/hockey/northward/session');
 await n.init();
 const {A: r,B: i,C: a,D: o,E: s,F: c,I: l,L: u,M: d,N: f,O: p,P: m,R: h,S: g,T: _,V: v,_: y,a: b,b: x,c: S,d: ee,f: C,g: te,h: ne,i: re,j: ie,k: ae,l: w,m: oe,n: se,o: ce,p: le,r: ue,s: de,t: fe,u: pe,v: me,w: he,x: ge,y: _e,z: ve} = T3;
 
@@ -3741,7 +3743,7 @@ var ir = class {
       return q(J(this.root, `#nick`).value) || this.defaultName();
     }
     defaultName() {
-      let e = localStorage.getItem(`sling.defaultName`);
+      let e = northwardUser?.nickname || localStorage.getItem(`sling.defaultName`);
       return (
         e ||
           ((e = `玩家` + Math.floor(1e3 + Math.random() * 9e3)),
@@ -3874,7 +3876,7 @@ var ir = class {
     bindMenu() {
       let e = this.root,
         t = J(e, `#nick`);
-      ((t.value = q(localStorage.getItem(`sling.name`) ?? ``)),
+      ((t.value = q(northwardUser?.nickname || localStorage.getItem(`sling.name`) || ``)),
         (t.placeholder = this.defaultName()),
         t.addEventListener(`input`, (e) => {
           if (e.isComposing) return;

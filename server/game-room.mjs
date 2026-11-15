@@ -1,6 +1,7 @@
+import { authenticatePlayer } from './northward-auth.mjs';
 // 对局房间（Colyseus 0.18）：四态状态机 waiting → starting → playing → over
 // 状态经 schema 动态解码下发，字段与原版客户端读取点一一对应
-import { Room, CloseCode } from 'colyseus';
+import { Room, CloseCode, ServerError } from 'colyseus';
 import { Rt, Be, ze } from '../engine/index.mjs';
 import { GameState, PlayerState, PuckState } from './state.mjs';
 import * as board from './leaderboard.mjs';
@@ -19,9 +20,16 @@ const fin = (v, lo, hi) => (Number.isFinite(v) ? Math.min(hi, Math.max(lo, v)) :
 const quantize = (v) => Math.round(v * 1000) / 1000;
 
 export class GameRoom extends Room {
+  static activeRooms = 0;
+  static onAuth(_token, options, context) { return authenticatePlayer(options, context); }
+
   maxClients = 2;
 
   onCreate({ mode, matchTime, overtime } = {}) {
+    const limit = Number(process.env.SLING_MAX_ROOMS) || 20;
+    if (GameRoom.activeRooms >= limit) throw new ServerError(503, '当前对局较多，请稍后再试');
+    GameRoom.activeRooms++;
+    this.countedRoom = true;
     this.mode = mode === 'friend' ? 'friend' : 'queue';
     this.engine = new Rt({ matchTime: matchTime ?? 60, overtime: overtime ?? 120 });
     this.engine.drainEvents();
@@ -106,7 +114,7 @@ export class GameRoom extends Room {
     this.onMessage('rename', (client, m) => {
       const p = this.meta.players.get(client.sessionId);
       if (!p || this.phase !== 'over') return;
-      const name = String(m.name || '').trim().slice(0, 24);
+      const name = String(client.auth?.user?.nickname || m.name || '').trim().slice(0, 24);
       p.state.name = name || p.state.name;
       client.send('renamed', { requestId: m.requestId | 0, name: p.state.name });
     });
@@ -133,6 +141,7 @@ export class GameRoom extends Room {
   }
 
   onJoin(client, { name, pid }) {
+    if (client.auth) ({ name, pid } = client.auth);
     const used = [...this.meta.players.values()].map((p) => p.side);
     const side = used.includes(0) ? 1 : 0;
     const ps = new PlayerState();
@@ -317,7 +326,8 @@ export class GameRoom extends Room {
   }
 
   onDispose() {
-    this.engine.world.free();
+    if (this.countedRoom) { GameRoom.activeRooms--; this.countedRoom = false; }
+    this.engine?.world.free();
   }
 
   syncPucks() {

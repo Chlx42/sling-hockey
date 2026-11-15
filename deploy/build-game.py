@@ -55,5 +55,11 @@ with tempfile.TemporaryDirectory(prefix="sling-build-") as directory:
             check=True,
         )
     game = target.read_text()
+# 向北握手先完成再初始化游戏；保持构建结果与已提交客户端一致。
+if 'await n.init();' not in game:
+    raise RuntimeError('未找到游戏初始化位置，拒绝覆盖客户端')
+game = game.replace('await n.init();', "import { prepareNorthward } from '../northward-login.mjs';\nconst northwardUser = await prepareNorthward('hockey', '/hockey/northward/session');\nawait n.init();")
+game = game.replace('e = localStorage.getItem(`sling.defaultName`);', 'e = northwardUser?.nickname || localStorage.getItem(`sling.defaultName`);')
+game = game.replace('q(localStorage.getItem(`sling.name`) ?? ``)', 'q(northwardUser?.nickname || localStorage.getItem(`sling.name`) || ``)')
 open(f"{ROOT}/client/js/game.mjs", "w").write(game)
 print(f"game.mjs: {game.count(chr(10))} 行 / {len(game)//1024}KB")
