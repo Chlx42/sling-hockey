@@ -1,3 +1,4 @@
+import { authenticatePlayer } from './northward-auth.mjs';
 // 匹配队列房间（Colyseus 0.18）：成对配发 game 房席位预订；真人 8s 未配 → AI 陪练自客户端顶上
 import { Room, matchMaker } from 'colyseus';
 import { Schema, type } from '@colyseus/schema';
@@ -15,6 +16,8 @@ export class QueueState extends Schema {
 type('uint8')(QueueState.prototype, 'count');
 
 export class QueueRoom extends Room {
+  static onAuth(_token, options, context) { return authenticatePlayer(options, context); }
+
   maxClients = 50;
 
   onCreate() {
@@ -30,7 +33,8 @@ export class QueueRoom extends Room {
 
 
   onJoin(client, { name, pid }) {
-    this.waiting.push({ client, name: String(name || '玩家').slice(0, 24), pid: String(pid || ''), at: this.clock.currentTime, botLaunched: false });
+    if (client.auth) ({ name, pid } = client.auth);
+    this.waiting.push({ client, name: String(name || '玩家').slice(0, 24), pid: String(pid || ''), at: this.clock.currentTime, botLaunched: false, authContext: client.auth?.authContext });
     this.pushCount();
     if (this.waiting.length >= 2) this.pair();
   }
@@ -69,8 +73,8 @@ export class QueueRoom extends Room {
     const b = this.waiting.shift();
     this.pushCount();
     try {
-      const seatA = await matchMaker.create('game', { mode: 'queue', name: a.name, pid: a.pid });
-      const seatB = await matchMaker.joinById(seatA.roomId, { mode: 'queue', name: b.name, pid: b.pid });
+      const seatA = await matchMaker.create('game', { mode: 'queue', name: a.name, pid: a.pid }, a.authContext);
+      const seatB = await matchMaker.joinById(seatA.roomId, { mode: 'queue', name: b.name, pid: b.pid }, b.authContext);
       if (!this.clients.includes(a.client) || !this.clients.includes(b.client)) {
         if (this.clients.includes(a.client)) a.client.send('evt', { type: 'match_failed' });
         if (this.clients.includes(b.client)) b.client.send('evt', { type: 'match_failed' });
@@ -89,7 +93,7 @@ export class QueueRoom extends Room {
   checkBot() {
     if (this.waiting.length !== 1) return;
     const w = this.waiting[0];
-    if (w.botLaunched || w.pid.startsWith('bot-')) return;
+    if (process.env.SLING_BOTS_ENABLED === 'false' || w.botLaunched || w.pid.startsWith('bot-')) return;
     if (this.clock.currentTime - w.at >= BOT_AFTER_MS) {
       w.botLaunched = true;
       const name = 'AI 陪练·' + BOT_NAMES[(Math.random() * BOT_NAMES.length) | 0];

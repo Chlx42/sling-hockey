@@ -6,6 +6,7 @@ import { WebSocketTransport } from '@colyseus/ws-transport';
 import { GameRoom, SNAPSHOT_INTERVAL_MS } from './game-room.mjs';
 import { QueueRoom } from './queue-room.mjs';
 import * as board from './leaderboard.mjs';
+import { gameAuth } from './northward-auth.mjs';
 
 const PORT = Number(process.env.PORT) || 3217;
 
@@ -18,6 +19,9 @@ const gameServer = new Server({
   }),
   // /api 与 /matchmake 共用 transport 的 express 应用
   express: (app) => {
+    app.all('/hockey/northward/session', (req, res) => {
+      gameAuth.handle(req, res, new URL(req.url, 'http://localhost')).catch(() => res.status(500).end());
+    });
     app.get('/api/health', async (req, res) => {
       let rooms = -1;
       try { rooms = (await matchMaker.query({ name: 'game' })).length; } catch {}
@@ -28,7 +32,9 @@ const gameServer = new Server({
       res.setHeader('Access-Control-Allow-Origin', '*');
       const period = req.query.period === 'week' ? 'week' : 'all';
       const limit = Math.min(50, Math.max(1, Number(req.query.limit) || 10));
-      const pid = String(req.query.pid || '');
+      const user = gameAuth.identity(req.headers);
+      const supplied = String(req.query.pid || '');
+      const pid = user ? `northward_${user.uid}` : supplied.startsWith('northward_') ? '' : supplied;
       res.setHeader('Cache-Control', 'no-store');
       res.json(board.query(period, limit, pid));
     });

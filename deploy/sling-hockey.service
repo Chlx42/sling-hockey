@@ -8,6 +8,9 @@ WorkingDirectory=/opt/sling-hockey
 Environment=PORT=3217
 Environment=SLING_DATA_DIR=/opt/sling-hockey/data
 ExecStart=/usr/local/bin/node server/index.mjs
+EnvironmentFile=-/etc/northward-games/hockey.env
+CPUQuota=100%
+TasksMax=128
 Restart=on-failure
 RestartSec=3
 MemoryMax=512M
