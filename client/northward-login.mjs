@@ -8,7 +8,10 @@ export async function prepareNorthward(game, sessionPath) {
     notice.setAttribute('role', 'alert');
     notice.style.cssText = 'position:fixed;inset:0;z-index:99999;display:grid;place-content:center;gap:16px;background:#faf7f0;color:#292524;text-align:center;padding:24px;font-family:system-ui';
     const text = document.createElement('p'); text.textContent = '网络不稳定，暂时无法进入游戏';
-    const retry = document.createElement('button'); retry.textContent = '重新加载'; retry.onclick = () => location.reload();
+    const retry = document.createElement('button'); retry.textContent = '重新加载'; retry.onclick = () => {
+      const target = new URL(location.href); target.hash = ''; target.searchParams.set('northward', '1');
+      location.replace(target.href);
+    };
     notice.append(text, retry); document.body.append(notice);
     return new Promise(() => {});
   }
@@ -34,15 +37,17 @@ async function runHandshake(game, sessionPath) {
         headers: { 'Content-Type': 'application/json' },
         ...(guest ? {} : { body: JSON.stringify({ code: fragment.get('nw_code'), codeVerifier: pending.verifier, state: pending.state }) }) });
       const body = await response.json();
-      return response.ok ? body.user : null;
-    } catch { return null; }
+      if (!response.ok) throw new Error('账号交接未完成');
+      return body.user;
+    } catch { throw new Error('账号交接未完成'); }
   }
   const entering = url.searchParams.get('northward') === '1';
   url.searchParams.delete('northward');
   history.replaceState(null, '', url.pathname + url.search + url.hash);
-  let current;
-  try { current = await (await fetch(sessionPath, { credentials: 'same-origin', redirect: 'error', signal: AbortSignal.timeout(8000) })).json(); }
-  catch { return null; }
+  const status = await fetch(sessionPath, { credentials: 'same-origin', redirect: 'error', signal: AbortSignal.timeout(8000) });
+  if (!status.ok) throw new Error('无法确认当前账号');
+  const current = await status.json();
+  if (typeof current.enabled !== 'boolean') throw new Error('无法确认当前账号');
   if (!entering || !current.enabled) return current.user ?? null;
   // 先清除上一次账号，失败时不误用旧身份。
   const cleared = await fetch(sessionPath, { method: 'DELETE', credentials: 'same-origin', redirect: 'error', signal: AbortSignal.timeout(8000) });
